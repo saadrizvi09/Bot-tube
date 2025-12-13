@@ -217,8 +217,27 @@ export default function VideoDetailPage() {
               <div className="bg-blue-500/10 rounded-lg p-4 mb-4 border border-blue-500/20">
                 <p className="font-medium text-white">{currentQuestion.question}</p>
               </div>
-              <div className="prose prose-sm md:prose-base dark:prose-invert max-w-none text-gray-300 prose-headings:text-white prose-strong:text-white prose-a:text-blue-400 hover:prose-a:text-blue-300">
-                <ReactMarkdown>{currentQuestion.answer}</ReactMarkdown>
+              <div className="prose prose-invert prose-sm md:prose-base max-w-none prose-headings:text-white prose-p:text-gray-200 prose-strong:text-white prose-em:text-gray-300 prose-code:text-blue-300 prose-code:bg-blue-900/30 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-gray-900 prose-pre:border prose-pre:border-white/10 prose-a:text-blue-400 hover:prose-a:text-blue-300 prose-ul:text-gray-200 prose-ol:text-gray-200 prose-li:text-gray-200">
+                <ReactMarkdown
+                  components={{
+                    p: ({node, ...props}) => <p className="mb-3 leading-relaxed" {...props} />,
+                    ul: ({node, ...props}) => <ul className="mb-3 list-disc pl-5 space-y-1" {...props} />,
+                    ol: ({node, ...props}) => <ol className="mb-3 list-decimal pl-5 space-y-1" {...props} />,
+                    li: ({node, ...props}) => <li className="leading-relaxed" {...props} />,
+                    strong: ({node, ...props}) => <strong className="font-semibold text-white" {...props} />,
+                    em: ({node, ...props}) => <em className="italic text-gray-300" {...props} />,
+                    code: ({node, className, children, ...props}) => {
+                      const inline = !className;
+                      return inline ? (
+                        <code className="bg-blue-900/30 text-blue-300 px-1 py-0.5 rounded text-sm" {...props}>{children}</code>
+                      ) : (
+                        <code className={className} {...props}>{children}</code>
+                      );
+                    },
+                  }}
+                >
+                  {currentQuestion.answer}
+                </ReactMarkdown>
               </div>
             </div>
           )}
@@ -251,30 +270,6 @@ export default function VideoDetailPage() {
         </div>
       </div>
 
-      {/* Delete Confirmation Modal */}
-      {showDeleteModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-800 p-8 rounded-lg shadow-xl border border-gray-700 max-w-sm w-full text-center">
-            <TrashIcon className="h-16 w-16 text-red-500 mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-white mb-4">Confirm Deletion</h3>
-            <p className="text-gray-300 mb-6">Are you sure you want to delete this video? This action cannot be undone.</p>
-            <div className="flex justify-center gap-4">
-              <button
-                onClick={() => setShowDeleteModal(false)}
-                className="px-5 py-2 rounded-lg text-gray-200 bg-gray-700 hover:bg-gray-600 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDelete}
-                className="px-5 py-2 rounded-lg text-white bg-red-600 hover:bg-red-700 transition-colors"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {/* Delete Confirmation Modal */}
       {showDeleteModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">

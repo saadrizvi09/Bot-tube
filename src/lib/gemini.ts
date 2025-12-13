@@ -76,7 +76,7 @@ const retry = async <T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promis
 export const generateResponse = async (
   prompt: string,
   context: string[],
-  maxOutputTokens = 800
+  maxOutputTokens = 2048
 ): Promise<string> => {
   return limit(async () => {
     try {
@@ -84,8 +84,9 @@ export const generateResponse = async (
       const model = getGeminiModel();
       
       const systemPrompt = `You are a helpful assistant that answers questions about YouTube videos based on their transcript. 
-      Answer the question based ONLY on the context provided.Don't type "based on the transcript" just answer the question. If the answer is not in the context, say "I don't have enough information to answer that question."
-      Keep your answers concise and to the point.`;
+      Answer the question based ONLY on the context provided. Provide complete, comprehensive answers without mentioning the transcript.
+      If the answer is not in the context, say "I don't have enough information to answer that question."
+      Give detailed explanations when appropriate, but stay focused on answering the question.`;
       
       const contextText = context.join('\n\n');
       
@@ -101,15 +102,53 @@ export const generateResponse = async (
           },
         ],
         generationConfig: {
-          temperature: 0.2,
-          topP: 0.8,
+          temperature: 0.3,
+          topP: 0.95,
           topK: 40,
           maxOutputTokens: maxOutputTokens,
+          candidateCount: 1,
         },
+        safetySettings: [
+          {
+            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+          {
+            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+          {
+            category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+          {
+            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+          },
+        ],
       });
 
       const result = await retry(() => chat.sendMessage(prompt));
-      return result.response.text();
+      const response = result.response;
+      
+      // Log finish reason for debugging
+      const finishReason = response.candidates?.[0]?.finishReason;
+      if (finishReason && finishReason !== 'STOP') {
+        console.warn('Response may be incomplete. Finish reason:', finishReason);
+      }
+      
+      // Check if response was blocked or incomplete
+      if (!response || !response.text()) {
+        console.error('Empty or blocked response from Gemini');
+        console.error('Finish reason:', finishReason);
+        console.error('Safety ratings:', response.candidates?.[0]?.safetyRatings);
+        throw new Error('Response generation failed or was blocked');
+      }
+      
+      const responseText = response.text();
+      console.log(`Generated response length: ${responseText.length} characters`);
+      
+      return responseText;
     } catch (error: any) {
       console.error('Response generation error:', error);
       throw new Error(`Failed to generate response: ${error.message}`);

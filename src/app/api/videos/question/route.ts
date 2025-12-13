@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
       WHERE 1 - ("chunkEmbedding" <=> ${questionEmbedding}::vector) > 0.5
       AND "videoId" = ${videoId}
       ORDER BY similarity DESC
-      LIMIT 8
+      LIMIT 12
     `;
 
     if (Array.isArray(relevantChunks) && relevantChunks.length > 0) {
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
         WHERE 1 - ("chunkEmbedding" <=> ${questionEmbedding}::vector) > 0.3
         AND "videoId" = ${videoId}
         ORDER BY similarity DESC
-        LIMIT 8
+        LIMIT 12
       `;
 
       if (Array.isArray(lessRelevantChunks) && lessRelevantChunks.length > 0) {
@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
         const context = lessRelevantChunks.map((c: any) => c.chunkText);
         const answer = await generateResponse(question, context);
         
-        await db.videoQuestion.create({
+        const newVideoQuestion = await db.videoQuestion.create({
           data: {
             id: require('crypto').randomUUID(),
             videoId,
@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
             answer,
           },
         });
-        return NextResponse.json({ answer });
+        return NextResponse.json(newVideoQuestion);
 
       } else {
         console.log('No similar chunks found, getting top 5 chunks...');
@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
           const context = topChunks.map((c: any) => c.chunkText);
           const answer = await generateResponse(question, context);
           
-          await db.videoQuestion.create({
+          const newVideoQuestion = await db.videoQuestion.create({
             data: {
               id: require('crypto').randomUUID(),
               videoId,
@@ -117,12 +117,20 @@ export async function POST(req: NextRequest) {
               answer,
             },
           });
-          return NextResponse.json({ answer });
+          return NextResponse.json(newVideoQuestion);
         } else {
           console.log('No chunks found at all.');
-          return NextResponse.json({
-            answer: "I don't have enough information to answer that question from the video."
+          const answer = "I don't have enough information to answer that question from the video.";
+          const newVideoQuestion = await db.videoQuestion.create({
+            data: {
+              id: require('crypto').randomUUID(),
+              videoId,
+              userId: user.userId,
+              question,
+              answer,
+            },
           });
+          return NextResponse.json(newVideoQuestion);
         }
       }
     }

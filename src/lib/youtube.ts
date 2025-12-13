@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { YoutubeLoader } from "@langchain/community/document_loaders/web/youtube";
 import { YoutubeTranscript } from 'youtube-transcript';
-import { Document } from 'langchain/document';
+import { Innertube } from 'youtubei.js';
 
 const ytDlpConfig: YtDlpConfig = { workdir: '/tmp/yt-dlp' }; // Changed to use /tmp for Vercel deployment
 const ytDlp = new YtDlp(ytDlpConfig);
@@ -27,7 +27,35 @@ export function extractVideoId(url: string): string | null {
   return match ? match[1] : null;
 }
 
+// Get transcript without authentication using youtube-transcript package
+export async function getTranscriptNoAuth(youtubeUrl: string): Promise<{ success: boolean; transcript: string | null; error?: string }> {
+  try {
+    const videoId = extractVideoId(youtubeUrl);
+    if (!videoId) {
+      return { success: false, transcript: null, error: 'Invalid YouTube URL' };
+    }
+
+    console.log(`Attempting to fetch transcript for video ${videoId} with youtube-transcript...`);
+
+    const transcriptItems = await YoutubeTranscript.fetchTranscript(youtubeUrl);
+
+    if (!transcriptItems || transcriptItems.length === 0) {
+      return { success: false, transcript: null, error: 'No transcript found' };
+    }
+
+    // Combine all transcript items into a single string
+    const transcriptText = transcriptItems.map((item: any) => item.text).join(' ');
+    console.log(`Successfully fetched transcript for video ${videoId}, length: ${transcriptText.length}`);
+
+    return { success: true, transcript: transcriptText };
+  } catch (error: any) {
+    console.error(`Error fetching transcript with youtube-transcript:`, error);
+    return { success: false, transcript: null, error: error.message || 'Unknown error' };
+  }
+}
+
 export async function getVideoDetails(videoId: string) {
+  // Try LangChain first
   try {
     const loader = YoutubeLoader.createFromUrl(`https://www.youtube.com/watch?v=${videoId}`, {
       language: "en",
@@ -46,9 +74,22 @@ export async function getVideoDetails(videoId: string) {
       title: metadata.title || 'Untitled Video',
       duration: metadata.duration || 0,
     };
-  } catch (error) {
-    console.error('Error fetching video details:', error);
-    throw error;
+  } catch (langchainError) {
+    console.warn('LangChain failed to get video details, trying youtubei.js...', langchainError);
+    
+    // Fallback to youtubei.js
+    try {
+      const youtube = await Innertube.create();
+      const info = await youtube.getInfo(videoId);
+      
+      return {
+        title: info.basic_info.title || 'Untitled Video',
+        duration: info.basic_info.duration || 0,
+      };
+    } catch (youtubeijsError) {
+      console.error('Error fetching video details from youtubei.js:', youtubeijsError);
+      throw new Error('Failed to get video details from all sources');
+    }
   }
 }
 
@@ -101,45 +142,7 @@ export async function downloadAudio(youtubeUrl: string): Promise<string> {
   }
 }
 
-export async function getTranscriptNoAuth(videoUrl: string) {
-  try {
-    const videoId = extractVideoId(videoUrl);
-    
-    if (!videoId) {
-      throw new Error('Invalid YouTube URL');
-    }
-    
-    // This method doesn't require OAuth - it scrapes public transcript data
-    const transcriptArray = await YoutubeTranscript.fetchTranscript(videoId, {
-      lang: 'en'
-    });
-    
-    const fullTranscript = transcriptArray.map(item => item.text).join(' ');
-    
-    const document = new Document({
-      pageContent: fullTranscript,
-      metadata: {
-        source: videoUrl,
-        videoId: videoId,
-        method: 'youtube-transcript-scraping'
-      }
-    });
-    
-    return {
-      success: true,
-      document,
-      transcript: fullTranscript,
-      segments: transcriptArray
-    };
-    
-  } catch (error: any) {
-    return {
-      success: false,
-      error: error.message,
-      transcript: null
-    };
-  }
-}
+
 
 // Get transcript using LangChain
 export async function getTranscriptWithLangChain(videoId: string): Promise<string | null> {
