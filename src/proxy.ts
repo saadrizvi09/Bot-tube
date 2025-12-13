@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-// import { verifyToken } from '@/lib/auth'; // No longer import verifyToken directly here
 
 const PUBLIC_ROUTES_BASE = [
   '/', '/sign-in', '/sign-up',
@@ -9,7 +8,7 @@ const PUBLIC_ROUTES_BASE = [
   '/api/auth/verify-token', // Allow this new route
 ];
 
-export default async function middleware(req: NextRequest) {
+export default async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // Allow access to auth API routes and test routes regardless of token presence
@@ -30,8 +29,6 @@ export default async function middleware(req: NextRequest) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${cookieToken}`,
         },
-        // Ensure cookies are forwarded if this fetch is client-side
-        // credentials: 'include',
       });
 
       if (verifyRes.ok) {
@@ -40,10 +37,10 @@ export default async function middleware(req: NextRequest) {
           isAuthenticated = true;
         }
       } else {
-        console.log('Middleware: Token verification API returned non-OK status:', verifyRes.status);
+        console.log('Proxy: Token verification API returned non-OK status:', verifyRes.status);
       }
     } catch (error) {
-      console.error('Middleware: Error calling token verification API:', error);
+      console.error('Proxy: Error calling token verification API:', error);
     }
   }
 
@@ -57,23 +54,23 @@ export default async function middleware(req: NextRequest) {
   const isPublic = publicRoutes.some((route) => pathname === route || pathname.startsWith(`${route}/`));
 
   // Debugging logs
-  console.log(`Middleware: Path ${pathname}, Authenticated: ${isAuthenticated}, IsPublic: ${isPublic}`);
+  console.log(`Proxy: Path ${pathname}, Authenticated: ${isAuthenticated}, IsPublic: ${isPublic}`);
 
   if (isPublic) {
-    console.log(`Middleware: Path ${pathname} is public, allowing access.`);
+    console.log(`Proxy: Path ${pathname} is public, allowing access.`);
     return NextResponse.next();
   }
 
   // If not public and not authenticated, redirect to sign-in
   if (!isAuthenticated) {
-    console.log(`Middleware: Redirecting unauthenticated user from ${pathname} to /sign-in`);
+    console.log(`Proxy: Redirecting unauthenticated user from ${pathname} to /sign-in`);
     const url = req.nextUrl.clone();
     url.pathname = '/sign-in';
     url.searchParams.set('redirect_url', pathname);
     return NextResponse.redirect(url);
   }
 
-  console.log(`Middleware: Authenticated user accessing protected path ${pathname}, allowing access.`);
+  console.log(`Proxy: Authenticated user accessing protected path ${pathname}, allowing access.`);
   return NextResponse.next();
 }
 

@@ -76,21 +76,21 @@ export async function POST(request: NextRequest) {
 
     console.log('Video record created:', video.id);
 
-    // Get transcript (prioritize getTranscriptNoAuth, then LangChain, then AssemblyAI)
-    console.log('Attempting to get transcript with getTranscriptNoAuth...');
-    let transcriptResult = await getTranscriptNoAuth(youtubeUrl);
-    let transcript = transcriptResult.transcript;
+    // Get transcript (prioritize LangChain, then youtube-transcript, then AssemblyAI)
+    console.log('Attempting to get transcript with LangChain...');
+    let transcript = await getTranscriptWithLangChain(videoId);
 
-    if (transcriptResult.success && transcript) {
-      console.log('Transcript found from getTranscriptNoAuth, length:', transcript.length);
+    if (transcript) {
+      console.log('Transcript found from LangChain, length:', transcript.length);
     } else {
-      console.log(`No transcript found from getTranscriptNoAuth. Error: ${transcriptResult.error || 'Unknown error'}. Attempting to get transcript with LangChain...`);
-      transcript = await getTranscriptWithLangChain(videoId);
+      console.log('No transcript found from LangChain. Attempting to get transcript with youtube-transcript...');
+      let transcriptResult = await getTranscriptNoAuth(youtubeUrl);
+      transcript = transcriptResult.transcript;
 
-      if (transcript) {
-        console.log('Transcript found from LangChain, length:', transcript.length);
+      if (transcriptResult.success && transcript) {
+        console.log('Transcript found from youtube-transcript, length:', transcript.length);
       } else {
-        console.log('No transcript found from LangChain, falling back to AssemblyAI...');
+        console.log(`No transcript found from youtube-transcript. Error: ${transcriptResult.error || 'Unknown error'}. Falling back to AssemblyAI...`);
         try {
           // Download audio from YouTube (still required for AssemblyAI fallback)
           console.log('Downloading audio...');

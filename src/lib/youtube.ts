@@ -49,7 +49,7 @@ export async function getTranscriptNoAuth(youtubeUrl: string): Promise<{ success
 
     return { success: true, transcript: transcriptText };
   } catch (error: any) {
-    console.error(`Error fetching transcript with youtube-transcript:`, error);
+    console.log(`⚠️  youtube-transcript: ${error.message || 'No transcript available'}`);
     return { success: false, transcript: null, error: error.message || 'Unknown error' };
   }
 }
@@ -75,7 +75,7 @@ export async function getVideoDetails(videoId: string) {
       duration: metadata.duration || 0,
     };
   } catch (langchainError) {
-    console.warn('LangChain failed to get video details, trying youtubei.js...', langchainError);
+    console.log('⚠️  LangChain failed for video details (expected), using youtubei.js fallback...');
     
     // Fallback to youtubei.js
     try {
@@ -166,7 +166,7 @@ export async function getTranscriptWithLangChain(videoId: string): Promise<strin
     console.log(`Successfully fetched transcript for video ${videoId} with LangChain, length: ${transcriptText.length}`);
     return transcriptText;
   } catch (error: any) {
-    console.error(`Error fetching transcript with LangChain for video ${videoId}:`, error);
+    console.log(`⚠️  LangChain transcript failed for ${videoId} (will try other methods)`);
     return null;
   }
 }
