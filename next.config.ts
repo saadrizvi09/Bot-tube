@@ -1,9 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  eslint: {
-    // This will allow the build to complete even with ESLint errors
-    ignoreDuringBuilds: true,
-  },
+  // eslint configuration has been removed as it's no longer supported in Next.js 16
+  // Use .eslintrc or eslint.config.js instead
 };
 
 module.exports = nextConfig;
