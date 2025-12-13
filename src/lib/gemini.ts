@@ -25,7 +25,7 @@ const limit = pLimit(1);
 // Get the Gemini model
 export const getGeminiModel = () => {
   return genAI.getGenerativeModel({
-    model: 'gemini-2.0-flash-exp',
+    model: 'gemini-2.5-flash',
   });
 };
 

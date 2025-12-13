@@ -136,6 +136,7 @@ JWT_SECRET="your-super-secret-jwt-key"
 ├── tsconfig.json
 └── README.md                # This file
 ```
+
 ## 🤝 Contributing
 
 Contributions are welcome! If you have suggestions for improvements or new features, please feel free to:
