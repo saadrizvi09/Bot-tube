@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
     console.log('Chunking transcript...');
     let chunks;
     try {
-      chunks = chunkTranscript(transcript, 2000); // Further reduce chunk size to 500 characters
+      chunks = chunkTranscript(transcript, 2000); 
       console.log('Created chunks:', chunks.length);
       
       if (!chunks || chunks.length === 0) {

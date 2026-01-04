@@ -33,7 +33,7 @@ YT-Bot is a powerful Next.js 14 application that revolutionizes how you interact
 *   **ORM:** Prisma
 *   **Authentication:** JWT (JSON Web Tokens)
 *   **AI/LLM:** Google Gemini 2.0 Flash API
-*   **Embeddings:** Google Gemini `text-embedding-004`
+*   **Embeddings:** Google Gemini `text-embedding-001`
 *   **Speech-to-Text:** AssemblyAI
 *   **Video Processing:** `@langchain/community/document_loaders/web/youtube` for video metadata and transcript loading.
 
