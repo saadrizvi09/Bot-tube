@@ -258,24 +258,7 @@ export function chunkTranscript(transcript: string, chunkSize: number = 2000) { 
   let oldTranscript: string;
   do {
     oldTranscript = cleanedTranscript;
-    // Regex to find a sequence of 1 to 15 "word-like" tokens (non-whitespace characters)
-    // followed by one or more spaces, and then the exact same sequence.
-    //
-    // Breakdown of the regex:
-    // (\b(?:[^\s]+\s+){0,14}?[^\s]+\b)
-    //   - \b: Word boundary, ensures we match whole words/phrases.
-    //   - (?: ... ): A non-capturing group.
-    //   - [^\s]+\s+: Matches one or more non-whitespace characters (a "word")
-    //                followed by one or more whitespace characters.
-    //   - {0,14}?: This repeats the "word + space" pattern 0 to 14 times,
-    //              making the phrase 1 to 15 words long. The `?` makes it non-greedy,
-    //              so it matches the shortest possible repeating unit first.
-    //   - [^\s]+\b: Matches the last word of the phrase, followed by a word boundary.
-    // This entire first part is captured as Group 1 `(...)`.
-    //
-    // \s+\1: Matches one or more spaces followed by the exact content of Group 1 (the repeated phrase).
-    //
-    // The `g` flag ensures all occurrences in the string are replaced.
+   
     cleanedTranscript = cleanedTranscript.replace(/(\b(?:[^\s]+\s+){0,14}?[^\s]+\b)\s+\1/g, '$1');
 
     // After each replacement, collapse multiple spaces again to ensure clean boundaries
