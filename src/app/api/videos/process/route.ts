@@ -174,6 +174,9 @@ export async function POST(request: NextRequest) {
     console.log('Chunking transcript...');
     let chunks;
     try {
+      if (!transcript || transcript.trim() === '') {
+        throw new Error('Transcript is null or empty, cannot proceed with chunking.');
+      }
       chunks = chunkTranscript(transcript, 2000); 
       console.log('Created chunks:', chunks.length);
       
