@@ -4,10 +4,31 @@ import fs from 'fs';
 import path from 'path';
 import { YoutubeLoader } from "@langchain/community/document_loaders/web/youtube";
 import { YoutubeTranscript } from 'youtube-transcript';
-import { Innertube } from 'youtubei.js';
+// Use the maintained fork of ytdl-core to avoid 403 errors and "extract signature" failures
+import ytdl from '@distube/ytdl-core'; 
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
-const ytDlpConfig: YtDlpConfig = { workdir: '/tmp/yt-dlp' }; // Changed to use /tmp for Vercel deployment
+// Determines the temporary directory based on the environment
+const getTempDir = () => {
+  // Check if running on Vercel or restricted environment where only /tmp is writable
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return '/tmp';
+  }
+  // Local development (Windows/Mac/Linux)
+  return path.join(process.cwd(), 'temp');
+};
+
+const TEMP_DIR = getTempDir();
+const ytDlpConfig: YtDlpConfig = { workdir: path.join(TEMP_DIR, 'yt-dlp') };
+
+// Ensure temp directories exist
+if (!fs.existsSync(ytDlpConfig.workdir)) {
+  fs.mkdirSync(ytDlpConfig.workdir, { recursive: true });
+}
+
 const ytDlp = new YtDlp(ytDlpConfig);
+const execFileAsync = promisify(execFile);
 
 // Ensure yt-dlp executable is downloaded when the application starts
 (async () => {
@@ -75,19 +96,18 @@ export async function getVideoDetails(videoId: string) {
       duration: metadata.duration || 0,
     };
   } catch (langchainError) {
-    console.log('⚠️  LangChain failed for video details (expected), using youtubei.js fallback...');
+    console.log('⚠️  LangChain failed for video details (expected), using ytdl-core fallback...');
     
-    // Fallback to youtubei.js
+    // Fallback to ytdl-core (now using @distube/ytdl-core fork)
     try {
-      const youtube = await Innertube.create();
-      const info = await youtube.getInfo(videoId);
+      const info = await ytdl.getInfo(videoId);
       
       return {
-        title: info.basic_info.title || 'Untitled Video',
-        duration: info.basic_info.duration || 0,
+        title: info.videoDetails.title || 'Untitled Video',
+        duration: parseInt(info.videoDetails.lengthSeconds) || 0,
       };
-    } catch (youtubeijsError) {
-      console.error('Error fetching video details from youtubei.js:', youtubeijsError);
+    } catch (ytdlError) {
+      console.error('Error fetching video details from ytdl-core:', ytdlError);
       throw new Error('Failed to get video details from all sources');
     }
   }
@@ -101,10 +121,10 @@ export async function downloadAudio(youtubeUrl: string): Promise<string> {
       throw new Error('Invalid YouTube URL');
     }
 
-    const tempDir = '/tmp'; // Use /tmp for temporary storage on Vercel
-    // No need to create directory, /tmp is guaranteed to exist on Vercel
+    const audioDir = path.join(TEMP_DIR, 'audio');
+    if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true });
 
-    const audioPath = `${tempDir}/${videoId}.mp3`;
+    const audioPath = path.join(audioDir, `${videoId}.mp3`);
 
     if (fs.existsSync(audioPath)) {
       console.log('Audio file already exists, using cached version');
@@ -115,21 +135,27 @@ export async function downloadAudio(youtubeUrl: string): Promise<string> {
 
     // Download video using yt-dlp to get the audio
     try {
-      const downloadedPaths = await ytDlp.download({
-        url: youtubeUrl,
-        format: 'ba',
-      });
+      const binaryPath = path.join(ytDlpConfig.workdir!, 'yt-dlp.exe');
+      const outputTemplate = path.join(audioDir, '%(id)s.%(ext)s');
 
-      if (downloadedPaths.length === 0) {
-        throw new Error('No audio file was downloaded by yt-dlp.');
+      console.log('Using yt-dlp binary at:', binaryPath);
+      
+      await execFileAsync(binaryPath, [
+        youtubeUrl,
+        '-f', 'ba',
+        '-o', outputTemplate,
+      ], { cwd: ytDlpConfig.workdir });
+
+      // Find the downloaded file
+      const files = fs.readdirSync(audioDir);
+      const downloadedFile = files.find(f => f.startsWith(videoId));
+
+      if (!downloadedFile) {
+        throw new Error('No audio file found after download.');
       }
 
-      // The downloaded file name might not be exactly `${videoId}.mp3`, it can include title etc.
-      // We need to find the correct audio file path in the temp directory.
-      // For now, we'll assume the first downloaded path is the audio file we want.
-      const actualAudioPath = downloadedPaths[0];
-
-      console.log('Audio download completed');
+      const actualAudioPath = path.join(audioDir, downloadedFile);
+      console.log('Audio download completed:', actualAudioPath);
       return actualAudioPath;
     } catch (ytDlpError: any) {
       console.error('yt-dlp download error:', ytDlpError.message);
@@ -144,29 +170,205 @@ export async function downloadAudio(youtubeUrl: string): Promise<string> {
 
 
 
-// Get transcript using LangChain
+// Get transcript using yt-dlp subtitle download (most reliable - works even when other APIs fail)
+export async function getTranscriptWithYtDlpSubtitles(youtubeUrl: string, videoId: string): Promise<string | null> {
+  try {
+    console.log(`Attempting to fetch subtitles for video ${videoId} using yt-dlp...`);
+    
+    const subDir = path.join(TEMP_DIR, 'subs');
+    if (!fs.existsSync(subDir)) fs.mkdirSync(subDir, { recursive: true });
+    
+    const outputTemplate = path.join(subDir, `sub_${videoId}`);
+    const binaryPath = path.join(ytDlpConfig.workdir!, 'yt-dlp.exe'); // workdir is definitely set above
+    
+    // Check if binary exists, if not try to download it
+    if (!fs.existsSync(binaryPath)) {
+      console.log('yt-dlp binary not found, attempting to download...');
+      try {
+        await ytDlp.downloadLatestReleaseIfNotExists();
+      } catch (e) {
+        console.error('Failed to download yt-dlp binary:', e);
+      }
+    }
+
+    if (!fs.existsSync(binaryPath)) {
+      console.warn(`yt-dlp binary still not found at ${binaryPath}, skipping subtitle download`);
+      return null;
+    }
+    
+    try {
+      console.log('Downloading subtitles with yt-dlp...');
+      await execFileAsync(binaryPath, [
+        youtubeUrl,
+        '--write-auto-sub',
+        '--skip-download',
+        '--sub-lang', 'en',
+        '--output', outputTemplate,
+      ], { cwd: ytDlpConfig.workdir });
+    } catch (execError: any) {
+      // Check if it failed or just had no subtitles
+      if (execError.stderr?.includes('WARNING') || execError.stdout?.includes('Writing video subtitles')) {
+        console.log('Subtitles written despite warnings');
+      } else {
+        console.warn(`yt-dlp subtitle download had issues: ${execError.message}`);
+        // Continue to check if file exists anyway, sometimes it writes before erroring
+      }
+    }
+    
+    // Find the downloaded subtitle file
+    const files = fs.readdirSync(subDir);
+    const subFile = files.find((f) => f.includes(`sub_${videoId}`) && f.endsWith('.vtt'));
+    
+    if (!subFile) {
+      console.warn('No subtitle file found after yt-dlp download at', subDir);
+      return null;
+    }
+    
+    const subFilePath = path.join(subDir, subFile);
+    let vttContent = fs.readFileSync(subFilePath, 'utf-8');
+    
+    // Parse VTT format to extract just the text
+    // VTT format: timestamps, then text on next line
+    const lines = vttContent.split('\n');
+    const textParts = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      // Skip empty lines, WEBVTT header, timestamps (contains -->), and styling tags
+      if (line && !line.startsWith('WEBVTT') && !line.includes('-->') && !line.startsWith('Kind:') && 
+          !line.startsWith('Language:') && !line.startsWith('NOTE') && !line.includes('<v ')) {
+        // Remove any remaining timestamp tags like <00:00:05.160>
+        const cleanedLine = line.replace(/<[^>]+>/g, '');
+        if (cleanedLine) {
+          textParts.push(cleanedLine);
+        }
+      }
+    }
+    
+    const fullTranscript = textParts.join(' ').trim();
+    
+    if (fullTranscript.length === 0) {
+      console.warn('Parsed subtitle is empty');
+      // Clean up
+      fs.unlinkSync(subFilePath);
+      return null;
+    }
+    
+    console.log(`Successfully fetched subtitles with yt-dlp, length: ${fullTranscript.length}`);
+    
+    // Clean up the temp file
+    fs.unlinkSync(subFilePath);
+    
+    return fullTranscript;
+    
+  } catch (error: any) {
+    console.log(`⚠️  yt-dlp subtitles failed: ${error.message}`);
+    return null;
+  }
+}
+
+// Get transcript using ytdl-core (fallback method)
+export async function getTranscriptWithYtdlCore(videoId: string): Promise<string | null> {
+  try {
+    console.log(`Attempting to fetch transcript for video ${videoId} with ytdl-core...`);
+    const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
+    const tracks = info.player_response.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+
+    if (!tracks || tracks.length === 0) {
+      console.warn('No caption tracks found with ytdl-core');
+      return null;
+    }
+
+    // Prioritize English, then auto-generated English, then first available
+    const track = tracks.find((t: any) => t.languageCode === 'en') || 
+                 tracks.find((t: any) => t.languageCode.startsWith('en')) || 
+                 tracks[0];
+
+    if (!track) {
+        return null;
+    }
+
+    console.log(`Found caption track: ${track.name.simpleText} (${track.languageCode})`);
+    
+    // Fetch the transcript XML
+    const response = await fetch(track.baseUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch transcript XML: ${response.status}`);
+    }
+    
+    const xml = await response.text();
+    
+    // Simple regex to parse XML transcript
+    // Matches: <text start="123" dur="456">Content</text>
+    const regex = /<text[^>]*>(.*?)<\/text>/g;
+    let match;
+    const parts = [];
+    
+    while ((match = regex.exec(xml)) !== null) {
+      // Decode HTML entities (basic ones)
+      let text = match[1]
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+      parts.push(text);
+    }
+    
+    const fullTranscript = parts.join(' ');
+    
+    if (fullTranscript.length === 0) {
+        console.warn('Parsed transcript is empty');
+        return null;
+    }
+
+    console.log(`Successfully fetched transcript with ytdl-core, length: ${fullTranscript.length}`);
+    return fullTranscript;
+
+  } catch (error: any) {
+    console.log(`⚠️  ytdl-core transcript failed: ${error.message}`);
+    return null;
+  }
+}
+
+// Get transcript using LangChain (with seamless ytdl-core fallback)
 export async function getTranscriptWithLangChain(videoId: string): Promise<string | null> {
   try {
     console.log(`Attempting to fetch transcript for video ${videoId} with LangChain...`);
 
     const loader = YoutubeLoader.createFromUrl(`https://www.youtube.com/watch?v=${videoId}`, {
       language: "en",
-      addVideoInfo: true,
+      addVideoInfo: false,
     });
 
     const docs = await loader.load();
 
     if (docs.length === 0 || !docs[0] || !docs[0].pageContent) {
-      console.warn(`No transcript found with LangChain for video ${videoId}.`);
-      return null;
+      console.warn(`No transcript found with LangChain. triggers fallback.`);
+      throw new Error("Empty LangChain result");
     }
 
     // LangChain's YoutubeLoader returns the entire transcript as pageContent of the first document
     const transcriptText = docs[0].pageContent;
     console.log(`Successfully fetched transcript for video ${videoId} with LangChain, length: ${transcriptText.length}`);
     return transcriptText;
+
   } catch (error: any) {
-    console.log(`⚠️  LangChain transcript failed for ${videoId} (will try other methods)`);
+    console.log(`⚠️  LangChain loader failed: ${error.message}`);
+    
+    // Seamless Fallback: Try ytdl-core (currently the most reliable method)
+    console.log(`🔄 Recovering with ytdl-core fallback...`);
+    try {
+        const ytdlTranscript = await getTranscriptWithYtdlCore(videoId);
+        if (ytdlTranscript) {
+            console.log(`✅ Fallback successful: Retrieved transcript via ytdl-core`);
+            return ytdlTranscript;
+        }
+    } catch (fbError) {
+        console.warn(`Fallback to ytdl-core also failed.`);
+    }
+
+    console.log(`⚠️  All LangChain wrapper attempts failed for ${videoId}`);
     return null;
   }
 }
@@ -189,7 +391,8 @@ export async function transcribeWithAssemblyAI(audioPath: string) {
     // Upload and transcribe the audio file
     const transcriptResponse = await client.transcripts.transcribe({
       audio: audioPath,
-      language_detection: true, // Enable automatic language detection
+      speech_model: 'nano',
+      language_code: 'en',
       sentiment_analysis: false,
       auto_chapters: false,
       auto_highlights: false,

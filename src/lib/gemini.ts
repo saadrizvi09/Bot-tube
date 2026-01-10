@@ -30,7 +30,9 @@ export const getGeminiModel = () => {
 };
 
 export const getEmbeddingModel = () => {
-  return genAI.getGenerativeModel({ model: 'text-embedding-001' });
+  const modelName = 'text-embedding-004';
+  console.log('Using embedding model:', modelName);
+  return genAI.getGenerativeModel({ model: modelName });
 };
 
 export const generateEmbedding = async (text: string): Promise<number[]> => {

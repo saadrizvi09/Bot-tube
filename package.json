@@ -10,9 +10,10 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
+    "@distube/ytdl-core": "^4.16.12",
     "@google/generative-ai": "^0.24.1",
     "@heroicons/react": "^2.2.0",
-    "@langchain/community": "^0.3.49",
+    "@langchain/community": "^0.3.59",
     "@prisma/client": "^6.12.0",
     "@splinetool/react-spline": "^4.1.0",
     "@yemreak/yt-dlp": "^1.1.5",
@@ -32,8 +33,7 @@
     "tailwind-merge": "^3.4.0",
     "youtube-transcript": "^1.2.1",
     "youtube-transcript-api": "^3.0.6",
-    "youtubei.js": "^15.0.1",
-    "ytdl-core": "^4.11.5",
+    "youtubei.js": "^15.1.1",
     "ytdlp-nodejs": "^2.3.4"
   },
   "devDependencies": {

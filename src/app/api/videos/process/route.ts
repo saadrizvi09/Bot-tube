@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { extractVideoId, getVideoDetails, downloadAudio, transcribeWithAssemblyAI, chunkTranscript, getTranscriptWithLangChain, getTranscriptNoAuth } from '@/lib/youtube';
+import { extractVideoId, getVideoDetails, downloadAudio, transcribeWithAssemblyAI, chunkTranscript, getTranscriptWithLangChain, getTranscriptNoAuth, getTranscriptWithYtDlpSubtitles } from '@/lib/youtube';
 import { generateEmbedding } from '@/lib/gemini';
 import pLimit from 'p-limit';
 
@@ -36,7 +36,16 @@ export async function POST(request: NextRequest) {
 
     console.log('Extracted video ID:', videoId);
 
-    // Check if video already exists for this user
+    // Check if video already exists (by unique URL or videoId+userId combination)
+    // The previous check only looked for videoId + userId, but the schema seems to enforce unique youtubeUrl?
+    // Let's rely on finding by videoId which is safer if they used a different URL format for the same video.
+    
+    // First, check if ANY user has processed this URL if it's supposed to be unique globaly
+    // OR just handle the upsert/check properly.
+    
+    // Based on the error: "Unique constraint failed on the fields: (`youtubeUrl`)"
+    // This implies youtubeUrl must be unique in the whole table.
+    
     const existingVideo = await db.video.findFirst({
       where: {
         videoId,
@@ -64,55 +73,100 @@ export async function POST(request: NextRequest) {
 
     // Create video record (without transcript initially)
     console.log('Creating video record...');
-    video = await db.video.create({
-      data: {
-        youtubeUrl,
-        videoId,
-        title: details.title,
-        duration: details.duration || 0,
-        userId: user.userId,
-      },
-    });
+    try {
+      video = await db.video.create({
+        data: {
+          youtubeUrl,
+          videoId,
+          title: details.title,
+          duration: details.duration || 0,
+          userId: user.userId,
+        },
+      });
+    } catch (dbError: any) {
+       // Handle unique constraint violation (userId + videoId)
+       if (dbError.code === 'P2002') {
+         console.log('Video already exists for this user (race condition), fetching existing...');
+         const existing = await db.video.findFirst({ 
+             where: { 
+                 videoId,
+                 userId: user.userId
+             } 
+         });
+         
+         if (existing) {
+             return NextResponse.json({ 
+                message: 'Video already processed',
+                videoId: existing.id 
+             });
+         }
+       }
+       throw dbError;
+    }
 
     console.log('Video record created:', video.id);
 
-    // Get transcript (prioritize LangChain, then youtube-transcript, then AssemblyAI)
+    // Get transcript (prioritize LangChain, then yt-dlp subtitles, then youtube-transcript, then AssemblyAI)
     console.log('Attempting to get transcript with LangChain...');
     let transcript = await getTranscriptWithLangChain(videoId);
 
     if (transcript) {
       console.log('Transcript found from LangChain, length:', transcript.length);
     } else {
-      console.log('No transcript found from LangChain. Attempting to get transcript with youtube-transcript...');
-      let transcriptResult = await getTranscriptNoAuth(youtubeUrl);
-      transcript = transcriptResult.transcript;
-
-      if (transcriptResult.success && transcript) {
-        console.log('Transcript found from youtube-transcript, length:', transcript.length);
+      console.log('No transcript found from LangChain. Attempting to get subtitles with yt-dlp...');
+      
+      try {
+        transcript = await getTranscriptWithYtDlpSubtitles(youtubeUrl, videoId);
+      } catch (e) {
+         console.error('Error invoking yt-dlp subtitles:', e);
+      }
+      
+      if (transcript) {
+        console.log('Transcript found from yt-dlp subtitles, length:', transcript.length);
       } else {
-        console.log(`No transcript found from youtube-transcript. Error: ${transcriptResult.error || 'Unknown error'}. Falling back to AssemblyAI...`);
-        try {
-          // Download audio from YouTube (still required for AssemblyAI fallback)
-          console.log('Downloading audio...');
-          let audioPath;
-          try {
-            audioPath = await downloadAudio(youtubeUrl);
-            console.log('Audio downloaded to:', audioPath);
-          } catch (error) {
-            console.error('Error downloading audio:', error);
-            throw new Error('Failed to download video audio');
-          }
-          transcript = await transcribeWithAssemblyAI(audioPath); // Pass audioPath
-          console.log('Transcription completed with AssemblyAI, length:', transcript?.length || 0);
+        console.log('No subtitles from yt-dlp. Attempting to get transcript with youtube-transcript...');
+        let transcriptResult = await getTranscriptNoAuth(youtubeUrl);
+        transcript = transcriptResult.transcript;
+
+        if (transcriptResult.success && transcript) {
+          console.log('Transcript found from youtube-transcript, length:', transcript.length);
+        } else {
+          // Try ytdl-core fallback before audio download
+          console.log(`No transcript found from youtube-transcript. Error: ${transcriptResult.error || 'Unknown error'}. Trying ytdl-core fallback...`);
           
-          if (!transcript || transcript.trim().length === 0) {
-            throw new Error('No transcript was generated from AssemblyAI');
+          // Import here to avoid circular dependencies if any
+          const { getTranscriptWithYtdlCore } = require('@/lib/youtube');
+          const ytdlTranscript = await getTranscriptWithYtdlCore(videoId);
+          
+          if (ytdlTranscript) {
+            transcript = ytdlTranscript;
+            console.log('Transcript found via ytdl-core, length:', transcript?.length);
+          } else {
+            console.log('ytdl-core transcript also failed. Falling back to AssemblyAI...');
+            try {
+              // Download audio from YouTube (still required for AssemblyAI fallback)
+              console.log('Downloading audio...');
+              let audioPath;
+              try {
+                audioPath = await downloadAudio(youtubeUrl);
+                console.log('Audio downloaded to:', audioPath);
+              } catch (error) {
+                console.error('Error downloading audio:', error);
+                throw new Error('Failed to download video audio');
+              }
+              // ... (rest of AssemblyAI logic)
+              transcript = await transcribeWithAssemblyAI(audioPath); // Pass audioPath
+              console.log('Transcription completed with AssemblyAI, length:', transcript?.length || 0);
+              
+              if (!transcript || transcript.trim().length === 0) {
+                throw new Error('No transcript was generated from AssemblyAI');
+              }
+            } catch (error:any) {
+              console.error('Error transcribing audio with AssemblyAI:', error);
+              // Don't delete here - let the outer catch block handle cleanup
+              throw new Error('Failed to transcribe video with AssemblyAI: ' + error.message);
+            }
           }
-        } catch (error:any) {
-          console.error('Error transcribing audio with AssemblyAI:', error);
-          // Delete the video record since processing failed
-          await db.video.delete({ where: { id: video.id } });
-          throw new Error('Failed to transcribe video with AssemblyAI: ' + error.message);
         }
       }
     }
@@ -240,7 +294,7 @@ export async function POST(request: NextRequest) {
     // Clean up failed video record
     if (video?.id) {
       try {
-        await db.video.delete({ where: { id: video.id } });
+        await db.video.deleteMany({ where: { id: video.id } });
         console.log('Cleaned up failed video record');
       } catch (deleteError) {
         console.error('Error cleaning up video record:', deleteError);

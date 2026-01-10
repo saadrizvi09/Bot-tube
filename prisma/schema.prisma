@@ -34,8 +34,8 @@ model Video {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   
-  youtubeUrl  String    @unique
-  videoId     String    @unique
+  youtubeUrl  String
+  videoId     String
   title       String
   duration    Int       // seconds
   transcript  String?   // backup storage
@@ -45,6 +45,8 @@ model Video {
   
   embeddings  VideoEmbedding[]
   questions   VideoQuestion[]
+
+  @@unique([userId, videoId])
 }
 
 model VideoEmbedding {
