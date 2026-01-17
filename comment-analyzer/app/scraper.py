@@ -3,14 +3,27 @@ YouTube Comment Scraper using youtube-comment-downloader.
 Fetches comments efficiently with sorting options.
 """
 
+# START DNS PATCH --------------------------------------------
+# Force IPv4 to fix "No address associated with hostname" errors
+# on Hugging Face Spaces / Docker environments
+import socket
+import requests.packages.urllib3.util.connection as urllib3_cn
+
+def allowed_gai_family():
+    return socket.AF_INET
+
+urllib3_cn.allowed_gai_family = allowed_gai_family
+# END DNS PATCH ----------------------------------------------
+
 import re
 import logging
-from typing import List, Dict, Any, Optional
-import yt_dlp
+from typing import List, Dict, Any, Optional, Generator
+from youtube_comment_downloader import YoutubeCommentDownloader, SORT_BY_POPULAR, SORT_BY_RECENT
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
 
 def extract_video_id(url_or_id: str) -> str:
     """
@@ -37,97 +50,112 @@ def fetch_comments(
     include_replies: bool = False
 ) -> Dict[str, Any]:
     """
-    Fetch comments from a YouTube video using yt-dlp.
+    Fetch comments from a YouTube video.
     """
     video_id = extract_video_id(video_url)
-    logger.info(f"Fetching comments for video: {video_id} using yt-dlp")
+    logger.info(f"Fetching comments for video: {video_id} using youtube-comment-downloader")
     
-    # Configure yt-dlp
-    ydl_opts = {
-        'skip_download': True,
-        'getcomments': True,
-        'writeinfojson': False,
-        'quiet': True,
-        'no_warnings': True,
-        'force_ipv4': True,  # Fix for HF Spaces DNS/Network issues
-        'extract_flat': True, # Don't download video
-        'extractor_args': {
-            'youtube': {
-                'skip': ['dash', 'hls'], # Skip video manifest processing
-                # yt-dlp doesn't strictly limit comment count in headers, 
-                # but we process what we get. 
-                # For heavily commented videos, this might be slow, 
-                # but it's reliable.
-            }
-        }
-    }
-
-    # If max_comments is small, we ideally want to tell yt-dlp to stop early,
-    # but yt-dlp fetches all metadata first. 
-    # For a free HF Space, this is a trade-off for reliability over speed.
+    downloader = YoutubeCommentDownloader()
+    
+    # Set sort order (0 = popular, 1 = recent)
+    sort_mode = SORT_BY_POPULAR if sort_by == "popular" else SORT_BY_RECENT
     
     comments = []
     reply_count_total = 0
     
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # We use extract_info. 
-            # Note: For very large videos, fetching ALL comments is slow.
-            # But yt-dlp is the only robust way correctly handling IPv4/DNS errors.
-            try:
-                info = ydl.extract_info(video_id, download=False)
-            except yt_dlp.utils.DownloadError as e:
-                # Handle specific yt-dlp errors
-                if "Sign in" in str(e):
-                    raise RuntimeError("Video requires sign-in (age-restricted or private).")
-                raise e
-
-            raw_comments = info.get('comments', [])
+        logger.info(f"Attempting to fetch up to {max_comments} comments with sort_mode={sort_mode}...")
+        
+        # Fetch comments using the generator
+        comment_generator = downloader.get_comments_from_url(
+            f"https://www.youtube.com/watch?v={video_id}",
+            sort_by=sort_mode
+        )
+        
+        comment_count = 0
+        for comment in comment_generator:
+            comment_count += 1
             
-            # If no comments found in 'comments' key, try checking if it's disabled
-            if raw_comments is None:
-                 raw_comments = []
-
-            # Sort manually if needed (yt-dlp usually returns sorted by top)
-            # sort_by param in function is mostly ignored as yt-dlp defaults to "best"
+            # Stop if we have enough comments
+            if len(comments) >= max_comments:
+                break
             
-            for comment in raw_comments:
-                if len(comments) >= max_comments:
-                    break
-                
-                # Check reply status (yt-dlp structure)
-                parent_id = comment.get('parent')
-                is_reply = parent_id is not None and parent_id != 'root'
-                
-                if is_reply and not include_replies:
-                    continue
+            # Skip empty or invalid comments
+            if not comment or not isinstance(comment, dict):
+                continue
+            
+            # Use 'cid' as the primary ID, fallback to 'id'
+            comment_id = comment.get('cid') or comment.get('id')
+            if not comment_id:
+                continue
 
-                comment_data = {
-                    'id': comment.get('id'),
-                    'text': comment.get('text', ''),
-                    'author': comment.get('author', 'Unknown'),
-                    'likes': comment.get('like_count', 0),
-                    'reply_count': 0, # yt-dlp flattens comments, so getting precise reply count per thread is hard
-                    'timestamp': comment.get('timestamp', 0),
-                    'is_reply': is_reply,
-                    'heart': False, # Not always available
-                    'photo': '' # Not always available
-                }
-                
-                comments.append(comment_data)
+            # Check for reply status
+            is_reply = comment.get('reply', False) or comment.get('parent') is not None
+            
+            if is_reply and not include_replies:
+                continue
+
+            # Extract fields with safe defaults
+            comment_data = {
+                'id': comment_id,
+                'text': comment.get('text', ''),
+                'author': comment.get('author', 'Unknown'),
+                'likes': comment.get('votes', 0) or comment.get('like_count', 0),
+                'reply_count': comment.get('replies', 0) or comment.get('reply_count', 0),
+                'timestamp': comment.get('time') or comment.get('published_time', ''),
+                'is_reply': is_reply,
+                'heart': comment.get('heart', False),
+                'photo': comment.get('photo', '')
+            }
+            
+            # Parse likes (might be string like "1.2K")
+            if isinstance(comment_data['likes'], str):
+                comment_data['likes'] = _parse_count(comment_data['likes'])
+            
+            if isinstance(comment_data['reply_count'], str):
+                comment_data['reply_count'] = _parse_count(comment_data['reply_count'])
+            
+            reply_count_total += comment_data['reply_count']
+            comments.append(comment_data)
 
     except Exception as e:
-        logger.error(f"Error fetching comments with yt-dlp: {str(e)}")
-        raise RuntimeError(f"Failed to fetch comments: {str(e)}")
+        logger.error(f"Error fetching comments: {str(e)}")
+        if "Consent" in str(e):
+            raise RuntimeError(f"YouTube consent required. This video may require accepting cookies/terms.")
+        elif "unavailable" in str(e).lower():
+            raise RuntimeError(f"Video unavailable or private. Please check the video URL.")
+        else:
+            raise RuntimeError(f"Failed to fetch comments. Error: {str(e)}")
     
-    logger.info(f"Fetched {len(comments)} valid comments")
+    logger.info(f"Fetched {len(comments)} valid comments out of {comment_count} total")
+    
+    if len(comments) == 0:
+        logger.warning(f"No comments found for video {video_id}")
     
     return {
         'video_id': video_id,
         'total_fetched': len(comments),
-        'total_replies': reply_count_total, # approximate or 0
+        'total_replies': reply_count_total,
         'comments': comments
     }
+
+
+def _parse_count(count_str: str) -> int:
+    """Parse count strings like '1.2K', '3.5M' to integers."""
+    if not count_str:
+        return 0
+    
+    count_str = str(count_str).strip().upper()
+    
+    try:
+        if 'K' in count_str:
+            return int(float(count_str.replace('K', '')) * 1000)
+        elif 'M' in count_str:
+            return int(float(count_str.replace('M', '')) * 1000000)
+        else:
+            return int(count_str)
+    except (ValueError, TypeError):
+        return 0
 
 def get_top_comments(
     comments: List[Dict[str, Any]], 
