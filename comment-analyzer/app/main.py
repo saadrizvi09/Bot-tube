@@ -7,7 +7,7 @@ Features:
 - Spam and troll detection
 - Comment preprocessing with autocorrect
 
-Deployment: Hugging Face Spaces (free tier)
+Deployment: Render (free tier)
 """
 
 import logging
@@ -323,4 +323,6 @@ async def general_exception_handler(request, exc):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+    import os
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
