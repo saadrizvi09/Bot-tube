@@ -115,12 +115,18 @@ def fetch_comments(
 
     except Exception as e:
         logger.error(f"Error fetching comments: {str(e)}")
-        if "Consent" in str(e):
+        error_msg = str(e).lower()
+        
+        if "consent" in error_msg:
             raise RuntimeError(f"YouTube consent required. This video may require accepting cookies/terms.")
-        elif "unavailable" in str(e).lower():
+        elif "unavailable" in error_msg or "private" in error_msg:
             raise RuntimeError(f"Video unavailable or private. Please check the video URL.")
+        elif "expecting value" in error_msg or "json" in error_msg:
+            raise RuntimeError(f"Unable to fetch comments - Video may have comments disabled, be age-restricted, or require sign-in. Try another video.")
+        elif "403" in error_msg or "forbidden" in error_msg:
+            raise RuntimeError(f"Access forbidden - Video may be restricted in this region or require authentication.")
         else:
-            raise RuntimeError(f"Failed to fetch comments. Error: {str(e)}")
+            raise RuntimeError(f"Failed to fetch comments: {str(e)}")
     
     logger.info(f"Fetched {len(comments)} valid comments out of {comment_count} total")
     
