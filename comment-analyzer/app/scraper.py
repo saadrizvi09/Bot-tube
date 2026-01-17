@@ -9,6 +9,14 @@ Fetches comments efficiently with sorting options.
 import socket
 import requests.packages.urllib3.util.connection as urllib3_cn
 
+# Monkey-patch socket.getaddrinfo to force IPv4
+_orig_getaddrinfo = socket.getaddrinfo
+
+def getaddrinfo_ipv4_only(host, port, family=0, type=0, proto=0, flags=0):
+    return _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+socket.getaddrinfo = getaddrinfo_ipv4_only
+
 def allowed_gai_family():
     return socket.AF_INET
 
