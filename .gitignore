@@ -28,6 +28,23 @@
 temp/
 *.exe
 
+# python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.coverage
+.pytest_cache/
+.mypy_cache/
+.pytype/
+
 # debug
 npm-debug.log*
 yarn-debug.log*

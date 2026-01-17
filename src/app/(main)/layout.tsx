@@ -61,6 +61,18 @@ export default function MainLayout({
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z" clipRule="evenodd" /></svg>
                 Add Video
               </Link>
+              <Link
+                href="/comments"
+                className={cn(
+                  "flex items-center gap-2 text-sm font-medium transition-colors",
+                  pathname === '/comments'
+                    ? 'text-white'
+                    : 'text-gray-400 hover:text-white'
+                )}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M18 13V5a2 2 0 00-2-2H4a2 2 0 00-2 2v8a2 2 0 002 2h3l3 3 3-3h3a2 2 0 002-2zM5 7a1 1 0 011-1h8a1 1 0 110 2H6a1 1 0 01-1-1zm1 3a1 1 0 100 2h3a1 1 0 100-2H6z" clipRule="evenodd" /></svg>
+                Comment Analyzer
+              </Link>
 
               {/* Styled Logout Button */}
               <form action="/api/auth/logout" method="post">
