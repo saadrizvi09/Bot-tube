@@ -64,6 +64,13 @@ def fetch_comments(
     logger.info(f"Fetching comments for video: {video_id} using youtube-comment-downloader")
     
     downloader = YoutubeCommentDownloader()
+    
+    # Set user agent to avoid bot detection
+    downloader.session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    })
 
     # Set sort order (0 = popular, 1 = recent)
     sort_mode = SORT_BY_POPULAR if sort_by == "popular" else SORT_BY_RECENT
