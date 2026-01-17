@@ -1,13 +1,12 @@
 """
-YouTube Comment Scraper using YouTube Data API v3.
-Official, reliable method for fetching comments.
+YouTube Comment Scraper using youtube-comment-downloader.
+Fetches comments efficiently with sorting options.
 """
 
 import re
 import logging
-from typing import List, Dict, Any, Optional
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+from typing import List, Dict, Any, Optional, Generator
+from youtube_comment_downloader import YoutubeCommentDownloader, SORT_BY_POPULAR, SORT_BY_RECENT
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -39,121 +38,114 @@ def fetch_comments(
     include_replies: bool = False
 ) -> Dict[str, Any]:
     """
-    Fetch comments from a YouTube video using YouTube Data API v3.
+    Fetch comments from a YouTube video.
     """
     video_id = extract_video_id(video_url)
-    logger.info(f"Fetching comments for video: {video_id} using YouTube Data API v3")
+    logger.info(f"Fetching comments for video: {video_id} using youtube-comment-downloader")
     
-    if not settings.YOUTUBE_API_KEY:
-        raise RuntimeError("YouTube API Key not configured. Please set YOUTUBE_API_KEY environment variable.")
+    downloader = YoutubeCommentDownloader()
+    
+    # Set user agent to avoid bot detection
+    downloader.session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    })
+
+    # Set sort order (0 = popular, 1 = recent)
+    sort_mode = SORT_BY_POPULAR if sort_by == "popular" else SORT_BY_RECENT
+    
+    comments = []
+    reply_count_total = 0
     
     try:
-        # Build YouTube API client
-        youtube = build('youtube', 'v3', developerKey=settings.YOUTUBE_API_KEY)
+        logger.info(f"Attempting to fetch up to {max_comments} comments with sort_mode={sort_mode}...")
         
-        comments = []
-        reply_count_total = 0
-        
-        # Determine sort order
-        order = 'relevance' if sort_by == 'popular' else 'time'
-        
-        # Fetch comment threads
-        request = youtube.commentThreads().list(
-            part='snippet,replies',
-            videoId=video_id,
-            maxResults=min(max_comments, 100),  # API limit is 100 per request
-            order=order,
-            textFormat='plainText'
+        # Fetch comments using the generator
+        comment_generator = downloader.get_comments_from_url(
+            f"https://www.youtube.com/watch?v={video_id}",
+            sort_by=sort_mode
         )
         
-        logger.info(f"Fetching up to {max_comments} comments with order={order}...")
-        
-        while request and len(comments) < max_comments:
-            response = request.execute()
+        comment_count = 0
+        for comment in comment_generator:
+            comment_count += 1
             
-            for item in response.get('items', []):
-                if len(comments) >= max_comments:
-                    break
-                
-                # Get top-level comment
-                top_comment = item['snippet']['topLevelComment']['snippet']
-                
-                comment_data = {
-                    'id': item['id'],
-                    'text': top_comment['textDisplay'],
-                    'author': top_comment['authorDisplayName'],
-                    'likes': top_comment.get('likeCount', 0),
-                    'reply_count': item['snippet'].get('totalReplyCount', 0),
-                    'timestamp': top_comment['publishedAt'],
-                    'is_reply': False,
-                    'heart': False,
-                    'photo': top_comment.get('authorProfileImageUrl', '')
-                }
-                
-                reply_count_total += comment_data['reply_count']
-                comments.append(comment_data)
-                
-                # Add replies if requested
-                if include_replies and 'replies' in item:
-                    for reply_item in item['replies']['comments']:
-                        if len(comments) >= max_comments:
-                            break
-                        
-                        reply = reply_item['snippet']
-                        reply_data = {
-                            'id': reply_item['id'],
-                            'text': reply['textDisplay'],
-                            'author': reply['authorDisplayName'],
-                            'likes': reply.get('likeCount', 0),
-                            'reply_count': 0,
-                            'timestamp': reply['publishedAt'],
-                            'is_reply': True,
-                            'heart': False,
-                            'photo': reply.get('authorProfileImageUrl', '')
-                        }
-                        comments.append(reply_data)
+            # Stop if we have enough comments
+            if len(comments) >= max_comments:
+                break
             
-            # Get next page
-            if 'nextPageToken' in response and len(comments) < max_comments:
-                request = youtube.commentThreads().list(
-                    part='snippet,replies',
-                    videoId=video_id,
-                    maxResults=min(max_comments - len(comments), 100),
-                    order=order,
-                    textFormat='plainText',
-                    pageToken=response['nextPageToken']
-                )
-            else:
-                request = None
-        
-        logger.info(f"Fetched {len(comments)} comments successfully")
-        
-        return {
-            'video_id': video_id,
-            'total_fetched': len(comments),
-            'total_replies': reply_count_total,
-            'comments': comments
-        }
-        
-    except HttpError as e:
-        error_content = e.content.decode('utf-8') if e.content else str(e)
-        logger.error(f"YouTube API HttpError: {error_content}")
-        
-        if e.resp.status == 403:
-            if 'commentsDisabled' in error_content:
-                raise RuntimeError("Comments are disabled on this video")
-            elif 'quotaExceeded' in error_content:
-                raise RuntimeError("YouTube API quota exceeded. Please try again later.")
-            else:
-                raise RuntimeError(f"Access forbidden: {error_content}")
-        elif e.resp.status == 404:
-            raise RuntimeError("Video not found. Please check the URL.")
-        else:
-            raise RuntimeError(f"YouTube API error: {error_content}")
+            # Skip empty or invalid comments
+            if not comment or not isinstance(comment, dict):
+                continue
             
+            # Use 'cid' as the primary ID, fallback to 'id'
+            comment_id = comment.get('cid') or comment.get('id')
+            if not comment_id:
+                continue
+
+            # Check for reply status
+            is_reply = comment.get('reply', False) or comment.get('parent') is not None
+            
+            if is_reply and not include_replies:
+                continue
+
+            # Extract fields with safe defaults
+            comment_data = {
+                'id': comment_id,
+                'text': comment.get('text', ''),
+                'author': comment.get('author', 'Unknown'),
+                'likes': comment.get('votes', 0) or comment.get('like_count', 0),
+                'reply_count': comment.get('replies', 0) or comment.get('reply_count', 0),
+                'timestamp': comment.get('time') or comment.get('published_time', ''),
+                'is_reply': is_reply,
+                'heart': comment.get('heart', False),
+                'photo': comment.get('photo', '')
+            }
+            
+            # Parse likes (might be string like "1.2K")
+            if isinstance(comment_data['likes'], str):
+                comment_data['likes'] = _parse_count(comment_data['likes'])
+            
+            if isinstance(comment_data['reply_count'], str):
+                comment_data['reply_count'] = _parse_count(comment_data['reply_count'])
+            
+            reply_count_total += comment_data['reply_count']
+            comments.append(comment_data)
+
     except Exception as e:
         logger.error(f"Error fetching comments: {str(e)}")
-        raise RuntimeError(f"Failed to fetch comments: {str(e)}")
+        raise RuntimeError(f"Failed to fetch comments. Error: {str(e)}")
+    
+    logger.info(f"Fetched {len(comments)} valid comments out of {comment_count} total")
+    
+    if len(comments) == 0:
+        logger.warning(f"No comments found for video {video_id}")
+    
+    return {
+        'video_id': video_id,
+        'total_fetched': len(comments),
+        'total_replies': reply_count_total,
+        'comments': comments
+    }
+
+
+def _parse_count(count_str: str) -> int:
+    """Parse count strings like '1.2K', '3.5M' to integers."""
+    if not count_str:
+        return 0
+    
+    count_str = str(count_str).strip().upper()
+    
+    try:
+        if 'K' in count_str:
+            return int(float(count_str.replace('K', '')) * 1000)
+        elif 'M' in count_str:
+            return int(float(count_str.replace('M', '')) * 1000000)
+        else:
+            return int(count_str)
+    except (ValueError, TypeError):
+        return 0
 
 
 def get_top_comments(
