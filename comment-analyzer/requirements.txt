@@ -31,4 +31,3 @@ asyncio-throttle==1.0.2
 
 # CORS
 starlette==0.35.1
-pysocks

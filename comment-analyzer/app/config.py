@@ -15,7 +15,6 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     PORT: int = 8000
-    PROXY_URL: str | None = None
     
     # Comment Scraping Settings
     MAX_COMMENTS: int = 100  # Max comments to fetch
