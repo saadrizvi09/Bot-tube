@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "YouTube Comment Analyzer"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
+    PROXY_URL: str | None = None
     
     # Comment Scraping Settings
     MAX_COMMENTS: int = 100  # Max comments to fetch

@@ -64,7 +64,15 @@ def fetch_comments(
     logger.info(f"Fetching comments for video: {video_id} using youtube-comment-downloader")
     
     downloader = YoutubeCommentDownloader()
-    
+
+    # Configure proxy if set in settings
+    if settings.PROXY_URL:
+        logger.info(f"Configuring downloader to use proxy")
+        downloader.session.proxies.update({
+            "http": settings.PROXY_URL,
+            "https": settings.PROXY_URL
+        })
+
     # Set sort order (0 = popular, 1 = recent)
     sort_mode = SORT_BY_POPULAR if sort_by == "popular" else SORT_BY_RECENT
     
