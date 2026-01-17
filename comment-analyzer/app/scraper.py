@@ -48,20 +48,16 @@ def fetch_comments(
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False,
+        'skip_download': True,
         'getcomments': True,
-        'age_limit': 99,  # Try to bypass age restrictions
-        'nocheckcertificate': True,
+        'format': 'worst',  # Don't fetch video, just metadata
+        'youtube_include_dash_manifest': False,
         'extractor_args': {
             'youtube': {
                 'comment_sort': ['top'] if sort_by == 'popular' else ['new'],
-                'max_comments': [str(max_comments * 2)],  # Fetch more to account for filtering
-                'skip': ['hls', 'dash'],  # Skip video download, only get metadata and comments
+                'max_comments': [max_comments * 3],  # Fetch more
             }
         },
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-        }
     }
     
     comments = []
@@ -72,7 +68,19 @@ def fetch_comments(
             logger.info(f"Attempting to fetch up to {max_comments} comments...")
             
             # Extract info and comments
-            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+            try:
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+            except yt_dlp.utils.ExtractorError as e:
+                error_msg = str(e).lower()
+                logger.error(f"ExtractorError: {error_msg}")
+                if 'sign in' in error_msg or 'age' in error_msg or 'members' in error_msg:
+                    raise RuntimeError("This video is restricted (age-restricted, members-only, or requires sign-in). Try a public video.")
+                elif 'private' in error_msg:
+                    raise RuntimeError("Video is private")
+                elif 'unavailable' in error_msg:
+                    raise RuntimeError("Video is unavailable")
+                else:
+                    raise RuntimeError(f"Cannot access video: {str(e)}")
             
             if not info:
                 raise RuntimeError("Failed to extract video information")
