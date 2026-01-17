@@ -92,7 +92,7 @@ export default function CommentAnalyzerPage() {
       });
       
       if (!response.ok) {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({ error: `Server returned ${response.status}` }));
         throw new Error(errorData.error || "Analysis failed");
       }
       
@@ -100,7 +100,11 @@ export default function CommentAnalyzerPage() {
       setInstantResult(data);
       
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Analysis failed");
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        setError(`Cannot connect to API server. Please ensure the backend is running at: ${API_BASE_URL}`);
+      } else {
+        setError(err instanceof Error ? err.message : "Analysis failed");
+      }
     } finally {
       setIsLoading(false);
     }

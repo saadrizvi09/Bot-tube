@@ -27,7 +27,7 @@ export default function SignUpPage() {
       });
       const data = await response.json();
       if (response.ok) {
-        router.push('/');
+        router.push('/dashboard');
         router.refresh();
       } else {
         setError(data.error || 'Registration failed');

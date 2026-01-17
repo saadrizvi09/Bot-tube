@@ -17,6 +17,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
     }
 
+    // Password validation
+    if (password.length < 8) {
+      return NextResponse.json({ error: 'Password must be at least 8 characters long' }, { status: 400 });
+    }
+
     const existing = await db.user.findUnique({ where: { emailAddress: email } });
     if (existing) {
       console.log('User already exists:', email);
@@ -49,8 +54,8 @@ export async function POST(req: NextRequest) {
     const res = NextResponse.json({ user });
     res.cookies.set('token', token, {
       httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production' ? true : false,
+      sameSite: 'strict',
+      secure: process.env.NODE_ENV === 'production',
       path: '/',
       maxAge: 60 * 60 * 24 * 7,
     });
