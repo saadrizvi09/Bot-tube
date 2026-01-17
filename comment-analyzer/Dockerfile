@@ -2,18 +2,11 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install system dependencies and DNS tools
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
-    dnsutils \
-    iputils-ping \
     && rm -rf /var/lib/apt/lists/*
-
-# Configure DNS to use Google's public DNS (fix for HF Spaces)
-RUN echo "nameserver 8.8.8.8" > /etc/resolv.conf && \
-    echo "nameserver 8.8.4.4" >> /etc/resolv.conf && \
-    echo "options single-request-reopen" >> /etc/resolv.conf
 
 # Copy requirements first for better caching
 COPY requirements.txt .
