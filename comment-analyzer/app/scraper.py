@@ -3,26 +3,6 @@ YouTube Comment Scraper using youtube-comment-downloader.
 Fetches comments efficiently with sorting options.
 """
 
-# START DNS PATCH --------------------------------------------
-# Force IPv4 to fix "No address associated with hostname" errors
-# on Hugging Face Spaces / Docker environments
-import socket
-import requests.packages.urllib3.util.connection as urllib3_cn
-
-# Monkey-patch socket.getaddrinfo to force IPv4
-_orig_getaddrinfo = socket.getaddrinfo
-
-def getaddrinfo_ipv4_only(host, port, family=0, type=0, proto=0, flags=0):
-    return _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-
-socket.getaddrinfo = getaddrinfo_ipv4_only
-
-def allowed_gai_family():
-    return socket.AF_INET
-
-urllib3_cn.allowed_gai_family = allowed_gai_family
-# END DNS PATCH ----------------------------------------------
-
 import re
 import logging
 from typing import List, Dict, Any, Optional, Generator
