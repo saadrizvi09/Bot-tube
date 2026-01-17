@@ -4,7 +4,7 @@ uvicorn[standard]==0.27.0
 python-multipart==0.0.6
 
 # YouTube comment scraping
-yt-dlp>=2023.12.30
+youtube-comment-downloader==0.1.78
 
 # Text preprocessing
 autocorrect==2.6.1
