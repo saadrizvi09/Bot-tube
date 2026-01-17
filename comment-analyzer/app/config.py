@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     PORT: int = 8000
     
+    # YouTube Data API v3
+    YOUTUBE_API_KEY: str = ""  # Set via environment variable
+    
     # Comment Scraping Settings
     MAX_COMMENTS: int = 100  # Max comments to fetch
     DEFAULT_COMMENTS: int = 50  # Default if not specified
