@@ -1,12 +1,12 @@
 """
-YouTube Comment Scraper using youtube-comment-downloader.
+YouTube Comment Scraper using yt-dlp.
 Fetches comments efficiently with sorting options.
 """
 
 import re
 import logging
-from typing import List, Dict, Any, Optional, Generator
-from youtube_comment_downloader import YoutubeCommentDownloader, SORT_BY_POPULAR, SORT_BY_RECENT
+from typing import List, Dict, Any, Optional
+import yt_dlp
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -38,100 +38,113 @@ def fetch_comments(
     include_replies: bool = False
 ) -> Dict[str, Any]:
     """
-    Fetch comments from a YouTube video.
+    Fetch comments from a YouTube video using yt-dlp.
     """
     video_id = extract_video_id(video_url)
-    logger.info(f"Fetching comments for video: {video_id} using youtube-comment-downloader")
+    logger.info(f"Fetching comments for video: {video_id} using yt-dlp")
     
-    downloader = YoutubeCommentDownloader()
-    
-    # Set user agent to avoid bot detection
-    downloader.session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    })
-
-    # Set sort order (0 = popular, 1 = recent)
-    sort_mode = SORT_BY_POPULAR if sort_by == "popular" else SORT_BY_RECENT
+    # Configure yt-dlp options
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': False,
+        'getcomments': True,
+        'extractor_args': {
+            'youtube': {
+                'comment_sort': ['top'] if sort_by == 'popular' else ['new'],
+                'max_comments': [str(max_comments * 2)],  # Fetch more to account for filtering
+            }
+        },
+    }
     
     comments = []
     reply_count_total = 0
     
     try:
-        logger.info(f"Attempting to fetch up to {max_comments} comments with sort_mode={sort_mode}...")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            logger.info(f"Attempting to fetch up to {max_comments} comments...")
+            
+            # Extract info and comments
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+            
+            if not info:
+                raise RuntimeError("Failed to extract video information")
+            
+            raw_comments = info.get('comments', [])
+            
+            if not raw_comments:
+                logger.warning(f"No comments found for video {video_id}")
+                return {
+                    'video_id': video_id,
+                    'total_fetched': 0,
+                    'total_replies': 0,
+                    'comments': []
+                }
+            
+            logger.info(f"Extracted {len(raw_comments)} raw comments from yt-dlp")
+            
+            # Process comments
+            for comment in raw_comments:
+                if not comment or not isinstance(comment, dict):
+                    continue
+                
+                # Stop if we have enough comments
+                if len(comments) >= max_comments:
+                    break
+                
+                comment_id = comment.get('id')
+                if not comment_id:
+                    continue
+                
+                # Check if it's a reply
+                is_reply = comment.get('parent', 'root') != 'root'
+                
+                if is_reply and not include_replies:
+                    continue
+                
+                # Extract fields
+                comment_data = {
+                    'id': comment_id,
+                    'text': comment.get('text', ''),
+                    'author': comment.get('author', 'Unknown'),
+                    'likes': comment.get('like_count', 0) or 0,
+                    'reply_count': comment.get('reply_count', 0) or 0,
+                    'timestamp': comment.get('timestamp', 0),
+                    'is_reply': is_reply,
+                    'heart': comment.get('is_favorited', False),
+                    'photo': comment.get('author_thumbnail', '')
+                }
+                
+                reply_count_total += comment_data['reply_count']
+                comments.append(comment_data)
+            
+            logger.info(f"Processed {len(comments)} valid comments")
+            
+    except yt_dlp.utils.DownloadError as e:
+        error_msg = str(e).lower()
+        logger.error(f"yt-dlp DownloadError: {error_msg}")
         
-        # Fetch comments using the generator
-        comment_generator = downloader.get_comments_from_url(
-            f"https://www.youtube.com/watch?v={video_id}",
-            sort_by=sort_mode
-        )
-        
-        comment_count = 0
-        for comment in comment_generator:
-            comment_count += 1
+        if 'private' in error_msg or 'unavailable' in error_msg:
+            raise RuntimeError("Video is private or unavailable")
+        elif 'age' in error_msg or 'sign in' in error_msg:
+            raise RuntimeError("Video is age-restricted or requires sign-in")
+        elif 'copyright' in error_msg:
+            raise RuntimeError("Video has copyright restrictions")
+        else:
+            raise RuntimeError(f"Failed to fetch video: {str(e)}")
             
-            # Stop if we have enough comments
-            if len(comments) >= max_comments:
-                break
-            
-            # Skip empty or invalid comments
-            if not comment or not isinstance(comment, dict):
-                continue
-            
-            # Use 'cid' as the primary ID, fallback to 'id'
-            comment_id = comment.get('cid') or comment.get('id')
-            if not comment_id:
-                continue
-
-            # Check for reply status
-            is_reply = comment.get('reply', False) or comment.get('parent') is not None
-            
-            if is_reply and not include_replies:
-                continue
-
-            # Extract fields with safe defaults
-            comment_data = {
-                'id': comment_id,
-                'text': comment.get('text', ''),
-                'author': comment.get('author', 'Unknown'),
-                'likes': comment.get('votes', 0) or comment.get('like_count', 0),
-                'reply_count': comment.get('replies', 0) or comment.get('reply_count', 0),
-                'timestamp': comment.get('time') or comment.get('published_time', ''),
-                'is_reply': is_reply,
-                'heart': comment.get('heart', False),
-                'photo': comment.get('photo', '')
-            }
-            
-            # Parse likes (might be string like "1.2K")
-            if isinstance(comment_data['likes'], str):
-                comment_data['likes'] = _parse_count(comment_data['likes'])
-            
-            if isinstance(comment_data['reply_count'], str):
-                comment_data['reply_count'] = _parse_count(comment_data['reply_count'])
-            
-            reply_count_total += comment_data['reply_count']
-            comments.append(comment_data)
-
     except Exception as e:
         logger.error(f"Error fetching comments: {str(e)}")
         error_msg = str(e).lower()
         
         if "consent" in error_msg:
-            raise RuntimeError(f"YouTube consent required. This video may require accepting cookies/terms.")
-        elif "unavailable" in error_msg or "private" in error_msg:
-            raise RuntimeError(f"Video unavailable or private. Please check the video URL.")
-        elif "expecting value" in error_msg or "json" in error_msg:
-            raise RuntimeError(f"Unable to fetch comments - Video may have comments disabled, be age-restricted, or require sign-in. Try another video.")
-        elif "403" in error_msg or "forbidden" in error_msg:
-            raise RuntimeError(f"Access forbidden - Video may be restricted in this region or require authentication.")
+            raise RuntimeError("YouTube consent required. This video may require accepting cookies/terms.")
+        elif "forbidden" in error_msg or "403" in error_msg:
+            raise RuntimeError("Access forbidden - Video may be restricted in this region")
+        elif "comments" in error_msg and "disabled" in error_msg:
+            raise RuntimeError("Comments are disabled on this video")
         else:
             raise RuntimeError(f"Failed to fetch comments: {str(e)}")
-    
-    logger.info(f"Fetched {len(comments)} valid comments out of {comment_count} total")
-    
-    if len(comments) == 0:
-        logger.warning(f"No comments found for video {video_id}")
     
     return {
         'video_id': video_id,
@@ -140,23 +153,6 @@ def fetch_comments(
         'comments': comments
     }
 
-
-def _parse_count(count_str: str) -> int:
-    """Parse count strings like '1.2K', '3.5M' to integers."""
-    if not count_str:
-        return 0
-    
-    count_str = str(count_str).strip().upper()
-    
-    try:
-        if 'K' in count_str:
-            return int(float(count_str.replace('K', '')) * 1000)
-        elif 'M' in count_str:
-            return int(float(count_str.replace('M', '')) * 1000000)
-        else:
-            return int(count_str)
-    except (ValueError, TypeError):
-        return 0
 
 def get_top_comments(
     comments: List[Dict[str, Any]], 
