@@ -49,12 +49,19 @@ def fetch_comments(
         'no_warnings': True,
         'extract_flat': False,
         'getcomments': True,
+        'age_limit': 99,  # Try to bypass age restrictions
+        'nocheckcertificate': True,
         'extractor_args': {
             'youtube': {
                 'comment_sort': ['top'] if sort_by == 'popular' else ['new'],
                 'max_comments': [str(max_comments * 2)],  # Fetch more to account for filtering
+                'skip': ['hls', 'dash'],  # Skip video download, only get metadata and comments
             }
         },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
     }
     
     comments = []
@@ -124,14 +131,16 @@ def fetch_comments(
         error_msg = str(e).lower()
         logger.error(f"yt-dlp DownloadError: {error_msg}")
         
-        if 'private' in error_msg or 'unavailable' in error_msg:
-            raise RuntimeError("Video is private or unavailable")
-        elif 'age' in error_msg or 'sign in' in error_msg:
-            raise RuntimeError("Video is age-restricted or requires sign-in")
+        if 'sign in' in error_msg or 'age' in error_msg:
+            raise RuntimeError("This video requires sign-in or is age-restricted. Please try a different video without restrictions.")
+        elif 'private' in error_msg or 'unavailable' in error_msg:
+            raise RuntimeError("Video is private or unavailable. Please check the URL.")
         elif 'copyright' in error_msg:
             raise RuntimeError("Video has copyright restrictions")
+        elif 'members-only' in error_msg:
+            raise RuntimeError("Video is members-only and requires a membership")
         else:
-            raise RuntimeError(f"Failed to fetch video: {str(e)}")
+            raise RuntimeError(f"Cannot access video: {str(e)}")
             
     except Exception as e:
         logger.error(f"Error fetching comments: {str(e)}")
