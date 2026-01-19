@@ -57,9 +57,6 @@ export function getUserFromRequest(req: NextRequest): { userId: string } | null 
 }
 
 export function setAuthCookie(response: Response, token: string) {
-  // This helper is for Route Handlers that use NextResponse
-  // Consumers should cast to NextResponse and set cookies appropriately
-  // Retained for API symmetry; prefer using NextResponse cookies API directly
 }
 
 export async function getUserFromCookies(): Promise<{ userId: string } | null> {
