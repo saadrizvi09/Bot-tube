@@ -18,10 +18,36 @@ const getTempDir = () => {
 const TEMP_DIR = getTempDir();
 const ytDlpConfig: YtDlpConfig = { workdir: path.join(TEMP_DIR, 'yt-dlp') };
 
+// Parse Netscape cookies.txt format and convert to Cookie header string
+function parseCookiesFile(cookiesPath: string): string {
+  try {
+    const content = fs.readFileSync(cookiesPath, 'utf-8');
+    const lines = content.split('\n');
+    const cookies: string[] = [];
+    
+    for (const line of lines) {
+      // Skip comments and empty lines
+      if (line.startsWith('#') || line.trim() === '') continue;
+      
+      // Netscape format: domain flag path secure expiration name value
+      const parts = line.split('\t');
+      if (parts.length >= 7) {
+        const name = parts[5];
+        const value = parts[6];
+        cookies.push(`${name}=${value}`);
+      }
+    }
+    
+    return cookies.join('; ');
+  } catch (error) {
+    console.error('Error parsing cookies file:', error);
+    return '';
+  }
+}
+
 // Configure ytdl-core with agent and cookies to bypass bot detection
 const ytdlAgent = ytdl.createAgent(undefined, {
   localAddress: undefined,
-  // Add realistic headers
 });
 
 // Cookie file path - look in comment-analyzer folder, project root, or environment variable
@@ -62,6 +88,11 @@ const getCookiesPath = () => {
 };
 
 const COOKIES_PATH = getCookiesPath();
+const COOKIES_HEADER = COOKIES_PATH ? parseCookiesFile(COOKIES_PATH) : '';
+
+if (COOKIES_HEADER) {
+  console.log('Successfully loaded YouTube cookies for bot bypass');
+}
 
 // Ensure temp directories exist
 if (!fs.existsSync(ytDlpConfig.workdir)) {
@@ -147,9 +178,16 @@ export async function getVideoDetails(videoId: string) {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
           },
         },
       };
+      
+      // Add cookies if available
+      if (COOKIES_HEADER) {
+        ytdlOptions.requestOptions.headers['Cookie'] = COOKIES_HEADER;
+        console.log('Using cookies for ytdl-core video details fetch');
+      }
       
       const info = await ytdl.getInfo(videoId, ytdlOptions);
       
@@ -345,9 +383,16 @@ export async function getTranscriptWithYtdlCore(videoId: string): Promise<string
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
           'Accept-Language': 'en-US,en;q=0.9',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         },
       },
     };
+    
+    // Add cookies if available
+    if (COOKIES_HEADER) {
+      ytdlOptions.requestOptions.headers['Cookie'] = COOKIES_HEADER;
+      console.log('Using cookies for ytdl-core transcript fetch');
+    }
     
     const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`, ytdlOptions);
     const tracks = info.player_response.captions?.playerCaptionsTracklistRenderer?.captionTracks;
