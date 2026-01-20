@@ -139,6 +139,14 @@ export async function POST(request: NextRequest) {
           
           if (!transcript) {
             console.log('No subtitles from yt-dlp. Falling back to AssemblyAI...');
+            
+            // Check if we're on Vercel where yt-dlp doesn't work
+            if (process.env.VERCEL) {
+              console.error('❌ Cannot use AssemblyAI on Vercel - yt-dlp binary not available for audio download');
+              console.error('💡 This video has transcripts disabled. Try a different video with transcripts enabled.');
+              throw new Error('Transcripts are disabled for this video and AssemblyAI cannot be used on Vercel');
+            }
+            
             try {
               // Download audio from YouTube (still required for AssemblyAI fallback)
               console.log('Downloading audio...');
