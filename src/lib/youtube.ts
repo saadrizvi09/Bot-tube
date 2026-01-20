@@ -211,48 +211,15 @@ export async function getVideoDetails(videoId: string) {
     } catch (ytdlError) {
       console.error('Error fetching video details from ytdl-core:', ytdlError);
       
-      // Final fallback: Try yt-dlp (most reliable, especially on Vercel)
-      console.log('🔄 Trying final fallback with yt-dlp...');
-      try {
-        const binaryPath = path.join(ytDlpConfig.workdir!, 'yt-dlp.exe');
-        
-        // Check if yt-dlp is available
-        if (!fs.existsSync(binaryPath)) {
-          console.log('yt-dlp binary not found, attempting to download...');
-          await ytDlp.downloadLatestReleaseIfNotExists();
-        }
-        
-        if (fs.existsSync(binaryPath)) {
-          const ytdlpArgs = [
-            `https://www.youtube.com/watch?v=${videoId}`,
-            '--dump-json',
-            '--no-playlist',
-            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          ];
-          
-          // Add cookies if available
-          if (COOKIES_PATH) {
-            ytdlpArgs.push('--cookies', COOKIES_PATH);
-          }
-          
-          const { stdout } = await execFileAsync(binaryPath, ytdlpArgs, { 
-            cwd: ytDlpConfig.workdir,
-            maxBuffer: 10 * 1024 * 1024, // 10MB buffer
-          });
-          
-          const videoInfo = JSON.parse(stdout);
-          console.log('✅ Successfully got video details from yt-dlp');
-          
-          return {
-            title: videoInfo.title || 'Untitled Video',
-            duration: videoInfo.duration || 0,
-          };
-        }
-      } catch (ytdlpError) {
-        console.error('Error fetching video details from yt-dlp:', ytdlpError);
-      }
+      // Graceful degradation - return placeholder details
+      // The transcript will still work, which is what matters most
+      console.log('⚠️ Using placeholder video details. Video ID:', videoId);
+      console.log('💡 Tip: Video details are optional - transcript extraction will still work!');
       
-      throw new Error('Failed to get video details from all sources (LangChain, ytdl-core, yt-dlp)');
+      return {
+        title: `YouTube Video ${videoId}`,
+        duration: 0,
+      };
     }
   }
 }

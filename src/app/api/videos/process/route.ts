@@ -56,7 +56,12 @@ export async function POST(request: NextRequest) {
       console.log('Video details retrieved:', details.title);
     } catch (error) {
       console.error('Error getting video details:', error);
-      throw new Error('Failed to get video details');
+      // Use placeholder details instead of failing
+      details = {
+        title: `YouTube Video ${videoId}`,
+        duration: 0,
+      };
+      console.log('⚠️ Using placeholder video details, will still attempt transcript extraction');
     }
 
     // Create video record (without transcript initially)
@@ -94,43 +99,46 @@ export async function POST(request: NextRequest) {
 
     console.log('Video record created:', video.id);
 
-    // Get transcript (prioritize LangChain, then yt-dlp subtitles, then youtube-transcript, then AssemblyAI)
+    // Get transcript with prioritized fallback chain
+    // On Vercel: LangChain → youtube-transcript → ytdl-core → (skip yt-dlp binary) → AssemblyAI
+    // Locally: LangChain → yt-dlp → youtube-transcript → ytdl-core → AssemblyAI
     console.log('Attempting to get transcript with LangChain...');
     let transcript = await getTranscriptWithLangChain(videoId);
 
     if (transcript) {
       console.log('Transcript found from LangChain, length:', transcript.length);
     } else {
-      console.log('No transcript found from LangChain. Attempting to get subtitles with yt-dlp...');
-      
-      try {
-        transcript = await getTranscriptWithYtDlpSubtitles(youtubeUrl, videoId);
-      } catch (e) {
-         console.error('Error invoking yt-dlp subtitles:', e);
-      }
-      
-      if (transcript) {
-        console.log('Transcript found from yt-dlp subtitles, length:', transcript.length);
-      } else {
-        console.log('No subtitles from yt-dlp. Attempting to get transcript with youtube-transcript...');
-        let transcriptResult = await getTranscriptNoAuth(youtubeUrl);
-        transcript = transcriptResult.transcript;
+      console.log('No transcript found from LangChain. Trying youtube-transcript...');
+      let transcriptResult = await getTranscriptNoAuth(youtubeUrl);
+      transcript = transcriptResult.transcript;
 
-        if (transcriptResult.success && transcript) {
-          console.log('Transcript found from youtube-transcript, length:', transcript.length);
+      if (transcriptResult.success && transcript) {
+        console.log('Transcript found from youtube-transcript, length:', transcript.length);
+      } else {
+        // Try ytdl-core fallback (works on Vercel with cookies)
+        console.log(`No transcript from youtube-transcript. Error: ${transcriptResult.error || 'Unknown error'}. Trying ytdl-core...`);
+        
+        const { getTranscriptWithYtdlCore } = require('@/lib/youtube');
+        const ytdlTranscript = await getTranscriptWithYtdlCore(videoId);
+        
+        if (ytdlTranscript) {
+          transcript = ytdlTranscript;
+          console.log('Transcript found via ytdl-core, length:', transcript?.length);
         } else {
-          // Try ytdl-core fallback before audio download
-          console.log(`No transcript found from youtube-transcript. Error: ${transcriptResult.error || 'Unknown error'}. Trying ytdl-core fallback...`);
+          // Try yt-dlp subtitles (only works locally, not on Vercel)
+          console.log('ytdl-core transcript also failed. Attempting yt-dlp subtitles...');
           
-          // Import here to avoid circular dependencies if any
-          const { getTranscriptWithYtdlCore } = require('@/lib/youtube');
-          const ytdlTranscript = await getTranscriptWithYtdlCore(videoId);
+          try {
+            transcript = await getTranscriptWithYtDlpSubtitles(youtubeUrl, videoId);
+            if (transcript) {
+              console.log('Transcript found from yt-dlp subtitles, length:', transcript.length);
+            }
+          } catch (e) {
+            console.error('Error invoking yt-dlp subtitles:', e);
+          }
           
-          if (ytdlTranscript) {
-            transcript = ytdlTranscript;
-            console.log('Transcript found via ytdl-core, length:', transcript?.length);
-          } else {
-            console.log('ytdl-core transcript also failed. Falling back to AssemblyAI...');
+          if (!transcript) {
+            console.log('No subtitles from yt-dlp. Falling back to AssemblyAI...');
             try {
               // Download audio from YouTube (still required for AssemblyAI fallback)
               console.log('Downloading audio...');
