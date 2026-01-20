@@ -5,20 +5,18 @@ import { extractVideoId, getVideoDetails, downloadAudio, transcribeWithAssemblyA
 import { generateEmbedding } from '@/lib/gemini';
 import pLimit from 'p-limit';
 
-const CONCURRENT_EMBEDDING_CALLS = 5; // Limit concurrent embedding calls
+const CONCURRENT_EMBEDDING_CALLS = 5; 
 const limit = pLimit(CONCURRENT_EMBEDDING_CALLS);
 
 export async function POST(request: NextRequest) {
   let video: any = null;
   
   try {
-    // Check authentication
     const user = getUserFromRequest(request);
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Parse request body
     const body = await request.json();
     const { youtubeUrl } = body;
 
@@ -28,7 +26,6 @@ export async function POST(request: NextRequest) {
 
     console.log('Processing video:', youtubeUrl);
 
-    // Extract video ID
     const videoId = extractVideoId(youtubeUrl);
     if (!videoId) {
       return NextResponse.json({ error: 'Invalid YouTube URL' }, { status: 400 });
@@ -36,16 +33,7 @@ export async function POST(request: NextRequest) {
 
     console.log('Extracted video ID:', videoId);
 
-    // Check if video already exists (by unique URL or videoId+userId combination)
-    // The previous check only looked for videoId + userId, but the schema seems to enforce unique youtubeUrl?
-    // Let's rely on finding by videoId which is safer if they used a different URL format for the same video.
-    
-    // First, check if ANY user has processed this URL if it's supposed to be unique globaly
-    // OR just handle the upsert/check properly.
-    
-    // Based on the error: "Unique constraint failed on the fields: (`youtubeUrl`)"
-    // This implies youtubeUrl must be unique in the whole table.
-    
+
     const existingVideo = await db.video.findFirst({
       where: {
         videoId,

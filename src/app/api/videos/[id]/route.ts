@@ -4,10 +4,9 @@ import { db } from '@/lib/db';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<any> } // CRITICAL WORKAROUND: Next.js build is demanding params be Promise<any>.
+  { params }: { params: Promise<any> } 
 ) {
   try {
-    // Check authentication
     const user = getUserFromRequest(request);
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -16,7 +15,6 @@ export async function GET(
     const resolvedParams = await params as { id: string };
     const { id } = resolvedParams;
 
-    // Get video details
     const video = await db.video.findFirst({
       where: {
         id,
@@ -37,10 +35,9 @@ export async function GET(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<any> } // CRITICAL WORKAROUND: Next.js build is demanding params be Promise<any>.
+  { params }: { params: Promise<any> } 
 ) {
   try {
-    // Check authentication
     const user = getUserFromRequest(request);
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -49,7 +46,6 @@ export async function DELETE(
     const resolvedParams = await params as { id: string };
     const { id } = resolvedParams;
 
-    // Check if video exists and belongs to user
     const video = await db.video.findFirst({
       where: {
         id,
@@ -61,21 +57,18 @@ export async function DELETE(
       return NextResponse.json({ error: 'Video not found' }, { status: 404 });
     }
 
-    // Delete associated video embeddings
     await db.videoEmbedding.deleteMany({
       where: {
         videoId: id,
       },
     });
 
-    // Delete associated video questions
     await db.videoQuestion.deleteMany({
       where: {
         videoId: id,
       },
     });
 
-    // Delete video
     await db.video.delete({
       where: {
         id,

@@ -4,23 +4,64 @@ import fs from 'fs';
 import path from 'path';
 import { YoutubeLoader } from "@langchain/community/document_loaders/web/youtube";
 import { YoutubeTranscript } from 'youtube-transcript';
-// Use the maintained fork of ytdl-core to avoid 403 errors and "extract signature" failures
 import ytdl from '@distube/ytdl-core'; 
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
-// Determines the temporary directory based on the environment
 const getTempDir = () => {
-  // Check if running on Vercel or restricted environment where only /tmp is writable
   if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
     return '/tmp';
   }
-  // Local development (Windows/Mac/Linux)
   return path.join(process.cwd(), 'temp');
 };
 
 const TEMP_DIR = getTempDir();
 const ytDlpConfig: YtDlpConfig = { workdir: path.join(TEMP_DIR, 'yt-dlp') };
+
+// Configure ytdl-core with agent and cookies to bypass bot detection
+const ytdlAgent = ytdl.createAgent(undefined, {
+  localAddress: undefined,
+  // Add realistic headers
+});
+
+// Cookie file path - look in comment-analyzer folder, project root, or environment variable
+const getCookiesPath = () => {
+  // On Vercel/serverless, check for environment variable first
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    const envCookies = process.env.YOUTUBE_COOKIES;
+    if (envCookies) {
+      const tmpCookiesPath = path.join(TEMP_DIR, 'cookies.txt');
+      try {
+        // Write cookies to /tmp on serverless
+        if (!fs.existsSync(tmpCookiesPath)) {
+          fs.writeFileSync(tmpCookiesPath, envCookies, 'utf-8');
+          console.log('Created cookies file from YOUTUBE_COOKIES environment variable');
+        }
+        return tmpCookiesPath;
+      } catch (error) {
+        console.error('Failed to write cookies from environment variable:', error);
+      }
+    }
+  }
+  
+  // Local development - look for cookies.txt file
+  const paths = [
+    path.join(process.cwd(), 'comment-analyzer', 'cookies.txt'),
+    path.join(process.cwd(), 'cookies.txt'),
+  ];
+  
+  for (const cookiePath of paths) {
+    if (fs.existsSync(cookiePath)) {
+      console.log('Using cookies file:', cookiePath);
+      return cookiePath;
+    }
+  }
+  
+  console.warn('No cookies.txt file found. Set YOUTUBE_COOKIES env var or create cookies.txt to improve YouTube access reliability.');
+  return null;
+};
+
+const COOKIES_PATH = getCookiesPath();
 
 // Ensure temp directories exist
 if (!fs.existsSync(ytDlpConfig.workdir)) {
@@ -100,7 +141,17 @@ export async function getVideoDetails(videoId: string) {
     
     // Fallback to ytdl-core (now using @distube/ytdl-core fork)
     try {
-      const info = await ytdl.getInfo(videoId);
+      const ytdlOptions: any = {
+        agent: ytdlAgent,
+        requestOptions: {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+          },
+        },
+      };
+      
+      const info = await ytdl.getInfo(videoId, ytdlOptions);
       
       return {
         title: info.videoDetails.title || 'Untitled Video',
@@ -140,11 +191,19 @@ export async function downloadAudio(youtubeUrl: string): Promise<string> {
 
       console.log('Using yt-dlp binary at:', binaryPath);
       
-      await execFileAsync(binaryPath, [
+      const ytdlpArgs = [
         youtubeUrl,
         '-f', 'ba',
         '-o', outputTemplate,
-      ], { cwd: ytDlpConfig.workdir });
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      ];
+      
+      // Add cookies if available
+      if (COOKIES_PATH) {
+        ytdlpArgs.push('--cookies', COOKIES_PATH);
+      }
+      
+      await execFileAsync(binaryPath, ytdlpArgs, { cwd: ytDlpConfig.workdir });
 
       // Find the downloaded file
       const files = fs.readdirSync(audioDir);
@@ -179,9 +238,7 @@ export async function getTranscriptWithYtDlpSubtitles(youtubeUrl: string, videoI
     if (!fs.existsSync(subDir)) fs.mkdirSync(subDir, { recursive: true });
     
     const outputTemplate = path.join(subDir, `sub_${videoId}`);
-    const binaryPath = path.join(ytDlpConfig.workdir!, 'yt-dlp.exe'); // workdir is definitely set above
-    
-    // Check if binary exists, if not try to download it
+    const binaryPath = path.join(ytDlpConfig.workdir!, 'yt-dlp.exe'); 
     if (!fs.existsSync(binaryPath)) {
       console.log('yt-dlp binary not found, attempting to download...');
       try {
@@ -198,13 +255,23 @@ export async function getTranscriptWithYtDlpSubtitles(youtubeUrl: string, videoI
     
     try {
       console.log('Downloading subtitles with yt-dlp...');
-      await execFileAsync(binaryPath, [
+      
+      const ytdlpArgs = [
         youtubeUrl,
         '--write-auto-sub',
         '--skip-download',
         '--sub-lang', 'en',
         '--output', outputTemplate,
-      ], { cwd: ytDlpConfig.workdir });
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        '--referer', 'https://www.youtube.com/',
+      ];
+      
+      // Add cookies if available
+      if (COOKIES_PATH) {
+        ytdlpArgs.push('--cookies', COOKIES_PATH);
+      }
+      
+      await execFileAsync(binaryPath, ytdlpArgs, { cwd: ytDlpConfig.workdir });
     } catch (execError: any) {
       // Check if it failed or just had no subtitles
       if (execError.stderr?.includes('WARNING') || execError.stdout?.includes('Writing video subtitles')) {
@@ -271,7 +338,18 @@ export async function getTranscriptWithYtDlpSubtitles(youtubeUrl: string, videoI
 export async function getTranscriptWithYtdlCore(videoId: string): Promise<string | null> {
   try {
     console.log(`Attempting to fetch transcript for video ${videoId} with ytdl-core...`);
-    const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`);
+    
+    const ytdlOptions: any = {
+      agent: ytdlAgent,
+      requestOptions: {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      },
+    };
+    
+    const info = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`, ytdlOptions);
     const tracks = info.player_response.captions?.playerCaptionsTracklistRenderer?.captionTracks;
 
     if (!tracks || tracks.length === 0) {

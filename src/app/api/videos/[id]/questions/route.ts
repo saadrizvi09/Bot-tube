@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/auth';
 import { db } from '@/lib/db';
 
-// CORRECT ✅
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<any> } // CRITICAL WORKAROUND: Next.js build is demanding params be Promise<any>.
+  { params }: { params: Promise<any> } 
 ) {
   try {
     const user = getUserFromRequest(request);
@@ -16,7 +15,6 @@ export async function GET(
     const resolvedParams = await params as { id: string };
     const { id } = resolvedParams;
 
-    // Check if video exists and belongs to user
     const video = await db.video.findFirst({
       where: {
         id,
