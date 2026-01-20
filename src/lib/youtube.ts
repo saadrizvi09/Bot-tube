@@ -7,6 +7,7 @@ import { YoutubeTranscript } from 'youtube-transcript';
 import ytdl from '@distube/ytdl-core'; 
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { Supadata } from '@supadata/js';
 
 const getTempDir = () => {
   if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
@@ -488,46 +489,90 @@ export async function getTranscriptWithSupadata(videoId: string): Promise<string
     
     console.log(`Attempting to fetch transcript for video ${videoId} with Supadata...`);
     
-    const response = await fetch(`https://api.supadata.ai/v1/youtube/transcript/${videoId}`, {
-      method: 'GET',
-      headers: {
-        'x-api-key': apiKey,
-        'Accept': 'application/json',
-      },
+    // Initialize Supadata client
+    const supadata = new Supadata({ apiKey });
+    
+    // Get transcript - request plain text format
+    const transcriptResult = await supadata.youtube.transcript({
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+      text: true, // Return plain text instead of timestamped chunks
+      lang: 'en', // Prefer English, falls back to first available
     });
     
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.log(`⚠️  Supadata failed with status ${response.status}:`, errorData);
+    // Check if we got a transcript directly or need to poll for job
+    if ('jobId' in transcriptResult) {
+      // Large video - need to poll for results
+      console.log(`⏳ Supadata returned job ID: ${transcriptResult.jobId}, polling for results...`);
+      
+      // Poll up to 30 seconds with 2 second intervals
+      let attempts = 15;
+      while (attempts > 0) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        const jobResult = await supadata.transcript.getJobStatus(transcriptResult.jobId as string);
+        
+        if (jobResult.status === 'completed') {
+          // Get the result data
+          const resultData = (jobResult as any).result || (jobResult as any).data;
+          
+          const transcriptText = typeof resultData === 'string' 
+            ? resultData
+            : Array.isArray(resultData)
+            ? resultData.map((seg: any) => seg.text || '').join(' ')
+            : '';
+          
+          if (transcriptText.length > 0) {
+            console.log(`✅ Successfully fetched transcript with Supadata (async), length: ${transcriptText.length}`);
+            return transcriptText;
+          }
+        } else if (jobResult.status === 'failed') {
+          console.log(`⚠️  Supadata job failed: ${(jobResult as any).error}`);
+          return null;
+        }
+        
+        attempts--;
+      }
+      
+      console.log('⚠️  Supadata job timeout - took too long');
       return null;
     }
     
-    const data = await response.json();
+    // Direct response - extract transcript text
+    let transcriptText = '';
     
-    // Supadata returns transcript in segments, combine them
-    if (data.transcript && Array.isArray(data.transcript)) {
-      const transcriptText = data.transcript
-        .map((segment: any) => segment.text || segment.content || '')
-        .join(' ')
-        .trim();
-      
-      if (transcriptText.length > 0) {
-        console.log(`✅ Successfully fetched transcript with Supadata, length: ${transcriptText.length}`);
-        return transcriptText;
+    if (typeof transcriptResult === 'string') {
+      transcriptText = transcriptResult;
+    } else if (transcriptResult && 'transcript' in transcriptResult) {
+      const transcript = (transcriptResult as any).transcript;
+      if (typeof transcript === 'string') {
+        transcriptText = transcript;
+      } else if (Array.isArray(transcript)) {
+        transcriptText = transcript.map((seg: any) => seg.text || seg.content || '').join(' ');
       }
+    } else if (Array.isArray(transcriptResult)) {
+      transcriptText = transcriptResult.map((seg: any) => seg.text || seg.content || '').join(' ');
     }
     
-    // Try alternative response formats
-    if (typeof data.transcript === 'string') {
-      console.log(`✅ Successfully fetched transcript with Supadata, length: ${data.transcript.length}`);
-      return data.transcript;
+    transcriptText = transcriptText.trim();
+    
+    if (transcriptText.length > 0) {
+      console.log(`✅ Successfully fetched transcript with Supadata, length: ${transcriptText.length}`);
+      return transcriptText;
     }
     
     console.log('⚠️  Supadata returned empty transcript');
     return null;
     
   } catch (error: any) {
-    console.log(`⚠️  Supadata transcript failed: ${error.message}`);
+    // Handle Supadata SDK errors
+    if (error.error) {
+      console.log(`⚠️  Supadata error: ${error.error} - ${error.message}`);
+      if (error.documentationUrl) {
+        console.log(`📚 See: ${error.documentationUrl}`);
+      }
+    } else {
+      console.log(`⚠️  Supadata transcript failed: ${error.message}`);
+    }
     return null;
   }
 }
