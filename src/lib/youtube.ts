@@ -476,6 +476,62 @@ export async function getTranscriptWithYtdlCore(videoId: string): Promise<string
   }
 }
 
+// Get transcript using Supadata API (most reliable, works on Vercel)
+export async function getTranscriptWithSupadata(videoId: string): Promise<string | null> {
+  try {
+    const apiKey = process.env.SUPADATA_API_KEY;
+    
+    if (!apiKey) {
+      console.log('⚠️  SUPADATA_API_KEY not set, skipping Supadata');
+      return null;
+    }
+    
+    console.log(`Attempting to fetch transcript for video ${videoId} with Supadata...`);
+    
+    const response = await fetch(`https://api.supadata.ai/v1/youtube/transcript/${videoId}`, {
+      method: 'GET',
+      headers: {
+        'x-api-key': apiKey,
+        'Accept': 'application/json',
+      },
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.log(`⚠️  Supadata failed with status ${response.status}:`, errorData);
+      return null;
+    }
+    
+    const data = await response.json();
+    
+    // Supadata returns transcript in segments, combine them
+    if (data.transcript && Array.isArray(data.transcript)) {
+      const transcriptText = data.transcript
+        .map((segment: any) => segment.text || segment.content || '')
+        .join(' ')
+        .trim();
+      
+      if (transcriptText.length > 0) {
+        console.log(`✅ Successfully fetched transcript with Supadata, length: ${transcriptText.length}`);
+        return transcriptText;
+      }
+    }
+    
+    // Try alternative response formats
+    if (typeof data.transcript === 'string') {
+      console.log(`✅ Successfully fetched transcript with Supadata, length: ${data.transcript.length}`);
+      return data.transcript;
+    }
+    
+    console.log('⚠️  Supadata returned empty transcript');
+    return null;
+    
+  } catch (error: any) {
+    console.log(`⚠️  Supadata transcript failed: ${error.message}`);
+    return null;
+  }
+}
+
 // Get transcript using LangChain (with seamless ytdl-core fallback)
 export async function getTranscriptWithLangChain(videoId: string): Promise<string | null> {
   try {

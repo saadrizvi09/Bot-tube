@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { extractVideoId, getVideoDetails, downloadAudio, transcribeWithAssemblyAI, chunkTranscript, getTranscriptWithLangChain, getTranscriptNoAuth, getTranscriptWithYtDlpSubtitles } from '@/lib/youtube';
+import { extractVideoId, getVideoDetails, downloadAudio, transcribeWithAssemblyAI, chunkTranscript, getTranscriptWithSupadata, getTranscriptWithLangChain, getTranscriptNoAuth, getTranscriptWithYtDlpSubtitles } from '@/lib/youtube';
 import { generateEmbedding } from '@/lib/gemini';
 import pLimit from 'p-limit';
 
@@ -100,31 +100,36 @@ export async function POST(request: NextRequest) {
     console.log('Video record created:', video.id);
 
     // Get transcript with prioritized fallback chain
-    // On Vercel: LangChain → youtube-transcript → ytdl-core → (skip yt-dlp binary) → AssemblyAI
-    // Locally: LangChain → yt-dlp → youtube-transcript → ytdl-core → AssemblyAI
-    console.log('Attempting to get transcript with LangChain...');
-    let transcript = await getTranscriptWithLangChain(videoId);
+    // Priority: Supadata (paid API, most reliable) → LangChain → youtube-transcript → ytdl-core → yt-dlp → AssemblyAI
+    console.log('Attempting to get transcript with Supadata...');
+    let transcript = await getTranscriptWithSupadata(videoId);
 
     if (transcript) {
-      console.log('Transcript found from LangChain, length:', transcript.length);
+      console.log('Transcript found from Supadata, length:', transcript.length);
     } else {
-      console.log('No transcript found from LangChain. Trying youtube-transcript...');
-      let transcriptResult = await getTranscriptNoAuth(youtubeUrl);
-      transcript = transcriptResult.transcript;
+      console.log('No transcript from Supadata. Trying LangChain...');
+      transcript = await getTranscriptWithLangChain(videoId);
 
-      if (transcriptResult.success && transcript) {
-        console.log('Transcript found from youtube-transcript, length:', transcript.length);
+      if (transcript) {
+        console.log('Transcript found from LangChain, length:', transcript.length);
       } else {
-        // Try ytdl-core fallback (works on Vercel with cookies)
-        console.log(`No transcript from youtube-transcript. Error: ${transcriptResult.error || 'Unknown error'}. Trying ytdl-core...`);
-        
-        const { getTranscriptWithYtdlCore } = require('@/lib/youtube');
-        const ytdlTranscript = await getTranscriptWithYtdlCore(videoId);
-        
-        if (ytdlTranscript) {
-          transcript = ytdlTranscript;
-          console.log('Transcript found via ytdl-core, length:', transcript?.length);
+        console.log('No transcript found from LangChain. Trying youtube-transcript...');
+        let transcriptResult = await getTranscriptNoAuth(youtubeUrl);
+        transcript = transcriptResult.transcript;
+
+        if (transcriptResult.success && transcript) {
+          console.log('Transcript found from youtube-transcript, length:', transcript.length);
         } else {
+          // Try ytdl-core fallback (works on Vercel with cookies)
+          console.log(`No transcript from youtube-transcript. Error: ${transcriptResult.error || 'Unknown error'}. Trying ytdl-core...`);
+          
+          const { getTranscriptWithYtdlCore } = require('@/lib/youtube');
+          const ytdlTranscript = await getTranscriptWithYtdlCore(videoId);
+          
+          if (ytdlTranscript) {
+            transcript = ytdlTranscript;
+            console.log('Transcript found via ytdl-core, length:', transcript?.length);
+          } else {
           // Try yt-dlp subtitles (only works locally, not on Vercel)
           console.log('ytdl-core transcript also failed. Attempting yt-dlp subtitles...');
           
@@ -173,6 +178,7 @@ export async function POST(request: NextRequest) {
           }
         }
       }
+    }
     }
 
     console.log('Chunking transcript...');
