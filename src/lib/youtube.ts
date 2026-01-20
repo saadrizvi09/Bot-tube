@@ -52,6 +52,11 @@ const ytdlAgent = ytdl.createAgent(undefined, {
 
 // Cookie file path - look in comment-analyzer folder, project root, or environment variable
 const getCookiesPath = () => {
+  console.log('🔍 Cookie Detection:');
+  console.log('  - Running on Vercel:', !!process.env.VERCEL);
+  console.log('  - YOUTUBE_COOKIES env var set:', !!process.env.YOUTUBE_COOKIES);
+  console.log('  - YOUTUBE_COOKIES length:', process.env.YOUTUBE_COOKIES?.length || 0);
+  
   // On Vercel/serverless, check for environment variable first
   if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
     const envCookies = process.env.YOUTUBE_COOKIES;
@@ -61,12 +66,18 @@ const getCookiesPath = () => {
         // Write cookies to /tmp on serverless
         if (!fs.existsSync(tmpCookiesPath)) {
           fs.writeFileSync(tmpCookiesPath, envCookies, 'utf-8');
-          console.log('Created cookies file from YOUTUBE_COOKIES environment variable');
+          console.log('✅ Created cookies file from YOUTUBE_COOKIES environment variable at:', tmpCookiesPath);
+        } else {
+          console.log('✅ Using existing cookies file at:', tmpCookiesPath);
         }
         return tmpCookiesPath;
       } catch (error) {
-        console.error('Failed to write cookies from environment variable:', error);
+        console.error('❌ Failed to write cookies from environment variable:', error);
       }
+    } else {
+      console.error('❌ YOUTUBE_COOKIES environment variable is NOT SET on Vercel!');
+      console.error('   👉 Go to Vercel Dashboard → Settings → Environment Variables');
+      console.error('   👉 Add YOUTUBE_COOKIES with your cookies.txt content');
     }
   }
   
@@ -78,12 +89,12 @@ const getCookiesPath = () => {
   
   for (const cookiePath of paths) {
     if (fs.existsSync(cookiePath)) {
-      console.log('Using cookies file:', cookiePath);
+      console.log('✅ Using local cookies file:', cookiePath);
       return cookiePath;
     }
   }
   
-  console.warn('No cookies.txt file found. Set YOUTUBE_COOKIES env var or create cookies.txt to improve YouTube access reliability.');
+  console.warn('⚠️  No cookies found! YouTube may block requests.');
   return null;
 };
 
@@ -91,7 +102,9 @@ const COOKIES_PATH = getCookiesPath();
 const COOKIES_HEADER = COOKIES_PATH ? parseCookiesFile(COOKIES_PATH) : '';
 
 if (COOKIES_HEADER) {
-  console.log('Successfully loaded YouTube cookies for bot bypass');
+  console.log('✅ Successfully parsed YouTube cookies, cookie count:', COOKIES_HEADER.split('; ').length);
+} else {
+  console.error('❌ No cookies available - YouTube will likely block requests on Vercel!');
 }
 
 // Ensure temp directories exist
@@ -197,7 +210,49 @@ export async function getVideoDetails(videoId: string) {
       };
     } catch (ytdlError) {
       console.error('Error fetching video details from ytdl-core:', ytdlError);
-      throw new Error('Failed to get video details from all sources');
+      
+      // Final fallback: Try yt-dlp (most reliable, especially on Vercel)
+      console.log('🔄 Trying final fallback with yt-dlp...');
+      try {
+        const binaryPath = path.join(ytDlpConfig.workdir!, 'yt-dlp.exe');
+        
+        // Check if yt-dlp is available
+        if (!fs.existsSync(binaryPath)) {
+          console.log('yt-dlp binary not found, attempting to download...');
+          await ytDlp.downloadLatestReleaseIfNotExists();
+        }
+        
+        if (fs.existsSync(binaryPath)) {
+          const ytdlpArgs = [
+            `https://www.youtube.com/watch?v=${videoId}`,
+            '--dump-json',
+            '--no-playlist',
+            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          ];
+          
+          // Add cookies if available
+          if (COOKIES_PATH) {
+            ytdlpArgs.push('--cookies', COOKIES_PATH);
+          }
+          
+          const { stdout } = await execFileAsync(binaryPath, ytdlpArgs, { 
+            cwd: ytDlpConfig.workdir,
+            maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+          });
+          
+          const videoInfo = JSON.parse(stdout);
+          console.log('✅ Successfully got video details from yt-dlp');
+          
+          return {
+            title: videoInfo.title || 'Untitled Video',
+            duration: videoInfo.duration || 0,
+          };
+        }
+      } catch (ytdlpError) {
+        console.error('Error fetching video details from yt-dlp:', ytdlpError);
+      }
+      
+      throw new Error('Failed to get video details from all sources (LangChain, ytdl-core, yt-dlp)');
     }
   }
 }
