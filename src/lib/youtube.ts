@@ -483,11 +483,13 @@ export async function getTranscriptWithSupadata(videoId: string): Promise<string
     const apiKey = process.env.SUPADATA_API_KEY;
     
     if (!apiKey) {
-      console.log('⚠️  SUPADATA_API_KEY not set, skipping Supadata');
+      console.log('⚠️  SUPADATA_API_KEY not set in environment variables, skipping Supadata');
+      console.log('💡 To use Supadata: Get API key from https://dash.supadata.ai and add to .env.local or Vercel env vars');
       return null;
     }
     
     console.log(`Attempting to fetch transcript for video ${videoId} with Supadata...`);
+    console.log('🔑 Supadata API key found, length:', apiKey.length);
     
     // Initialize Supadata client
     const supadata = new Supadata({ apiKey });
@@ -498,6 +500,10 @@ export async function getTranscriptWithSupadata(videoId: string): Promise<string
       text: true, // Return plain text instead of timestamped chunks
       lang: 'en', // Prefer English, falls back to first available
     });
+    
+    console.log('📦 Supadata response type:', typeof transcriptResult);
+    console.log('📦 Supadata response keys:', transcriptResult ? Object.keys(transcriptResult) : 'null');
+    console.log('📦 Full Supadata response:', JSON.stringify(transcriptResult, null, 2).substring(0, 500));
     
     // Check if we got a transcript directly or need to poll for job
     if ('jobId' in transcriptResult) {
@@ -542,6 +548,14 @@ export async function getTranscriptWithSupadata(videoId: string): Promise<string
     
     if (typeof transcriptResult === 'string') {
       transcriptText = transcriptResult;
+    } else if (transcriptResult && 'content' in transcriptResult) {
+      // Supadata returns transcript in 'content' field
+      const content = (transcriptResult as any).content;
+      if (typeof content === 'string') {
+        transcriptText = content;
+      } else if (Array.isArray(content)) {
+        transcriptText = content.map((seg: any) => seg.text || seg.content || '').join(' ');
+      }
     } else if (transcriptResult && 'transcript' in transcriptResult) {
       const transcript = (transcriptResult as any).transcript;
       if (typeof transcript === 'string') {
@@ -550,7 +564,7 @@ export async function getTranscriptWithSupadata(videoId: string): Promise<string
         transcriptText = transcript.map((seg: any) => seg.text || seg.content || '').join(' ');
       }
     } else if (Array.isArray(transcriptResult)) {
-      transcriptText = transcriptResult.map((seg: any) => seg.text || seg.content || '').join(' ');
+      transcriptText = (transcriptResult as any[]).map((seg: any) => seg.text || seg.content || '').join(' ');
     }
     
     transcriptText = transcriptText.trim();

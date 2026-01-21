@@ -37,14 +37,14 @@ export async function POST(req: NextRequest) {
       SELECT "chunkText", "startTime", "endTime", "chunkIndex",
       1 - ("chunkEmbedding" <=> ${questionEmbedding}::vector) AS similarity
       FROM "VideoEmbedding"
-      WHERE 1 - ("chunkEmbedding" <=> ${questionEmbedding}::vector) > 0.5
+      WHERE 1 - ("chunkEmbedding" <=> ${questionEmbedding}::vector) > 0.7
       AND "videoId" = ${videoId}
       ORDER BY similarity DESC
       LIMIT 12
     `;
 
     if (Array.isArray(relevantChunks) && relevantChunks.length > 0) {
-      console.log(`Found ${relevantChunks.length} chunks with similarity > 0.5`);
+      console.log(`Found ${relevantChunks.length} chunks with similarity > 0.7`);
       console.log('Top similarity scores:', relevantChunks.map((c: any) => c.similarity));
 
       // Generate response using Gemini with relevant chunks as context
@@ -63,13 +63,13 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json(newVideoQuestion);
     } else {
-      console.log('Found 0 chunks with similarity > 0.5');
+      console.log('Found 0 chunks with similarity > 0.7');
       console.log('Trying with similarity > 0.3...');
       const lessRelevantChunks = await db.$queryRaw`
         SELECT "chunkText", "startTime", "endTime", "chunkIndex",
         1 - ("chunkEmbedding" <=> ${questionEmbedding}::vector) AS similarity
         FROM "VideoEmbedding"
-        WHERE 1 - ("chunkEmbedding" <=> ${questionEmbedding}::vector) > 0.3
+        WHERE 1 - ("chunkEmbedding" <=> ${questionEmbedding}::vector) > 0.7
         AND "videoId" = ${videoId}
         ORDER BY similarity DESC
         LIMIT 12
