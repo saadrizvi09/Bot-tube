@@ -78,12 +78,18 @@ export default function CommentAnalyzerPage() {
     setError(null);
     setInstantResult(null);
     
+    console.log('[Comment Analyzer] Calling API:', `${API_BASE_URL}/analyze`);
+    console.log('[Comment Analyzer] Request body:', { video_url: videoUrl, max_comments: maxComments });
+    
     try {
-      const response = await fetch(`${API_BASE_URL}/analyze`, {
+      const response = await fetch(`${API_BASE_URL}/analyze?_t=${Date.now()}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "Pragma": "no-cache",
         },
+        cache: "no-store",
         body: JSON.stringify({
           video_url: videoUrl,
           max_comments: maxComments,
@@ -91,12 +97,17 @@ export default function CommentAnalyzerPage() {
         }),
       });
       
+      console.log('[Comment Analyzer] Response status:', response.status);
+      console.log('[Comment Analyzer] Response ok:', response.ok);
+      
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: `Server returned ${response.status}` }));
+        console.error('[Comment Analyzer] Error response:', errorData);
         throw new Error(errorData.error || "Analysis failed");
       }
       
       const data: InstantAnalysisResponse = await response.json();
+      console.log('[Comment Analyzer] Success! Analyzed', data.analyzed_comments, 'comments');
       setInstantResult(data);
       
     } catch (err) {

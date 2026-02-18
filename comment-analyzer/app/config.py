@@ -3,12 +3,38 @@ Configuration settings for the Comment Analyzer API.
 Deployed on Hugging Face Spaces (Docker).
 """
 
-from pydantic_settings import BaseSettings
+import os
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+from pathlib import Path
+
+
+def _find_env_files():
+    """Find all .env files to load, returns list of paths."""
+    env_files = []
+    # 1) Local .env in comment-analyzer/ (CWD when started by dev.bat)
+    local_env = Path(".env")
+    if local_env.exists():
+        env_files.append(str(local_env.resolve()))
+    # 2) Parent .env in project root (ytbot/.env)
+    parent_env = Path(__file__).resolve().parent.parent.parent / ".env"
+    if parent_env.exists():
+        env_files.append(str(parent_env))
+    # 3) Also check relative ../.env from CWD
+    parent_cwd_env = Path("../.env")
+    if parent_cwd_env.exists():
+        resolved = str(parent_cwd_env.resolve())
+        if resolved not in env_files:
+            env_files.append(resolved)
+    return tuple(env_files) if env_files else None
 
 
 class Settings(BaseSettings):
     """Application settings."""
+    model_config = SettingsConfigDict(
+        env_file=_find_env_files(),
+        extra="ignore",
+    )
     
     # API Settings
     APP_NAME: str = "YouTube Comment Analyzer"
@@ -70,9 +96,6 @@ class Settings(BaseSettings):
     # Text Processing
     MIN_COMMENT_LENGTH: int = 3
     MAX_COMMENT_LENGTH: int = 500
-    
-    class Config:
-        env_file = ".env"
 
 
 @lru_cache()

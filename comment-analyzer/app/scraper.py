@@ -9,7 +9,6 @@ from typing import List, Dict, Any, Optional
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 # Lazy-loaded API client
 _youtube_client = None
@@ -19,9 +18,14 @@ def _get_youtube_client():
     """Get or create the YouTube Data API client (lazy loading)."""
     global _youtube_client
     if _youtube_client is None:
+        import os
         from googleapiclient.discovery import build
 
-        api_key = settings.YOUTUBE_API_KEY
+        settings = get_settings()
+        # Try settings first, then fall back to os.environ directly
+        api_key = settings.YOUTUBE_API_KEY or os.environ.get("YOUTUBE_API_KEY", "")
+        # Strip any surrounding quotes just in case
+        api_key = api_key.strip('"').strip("'")
         if not api_key:
             raise RuntimeError(
                 "YOUTUBE_API_KEY is not set. "
