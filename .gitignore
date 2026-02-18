@@ -31,9 +31,6 @@ temp/
 # YouTube cookies (contains authentication tokens)
 cookies.txt
 
-# Hide comment-analyzer folder
-comment-analyzer/
-
 # python
 .venv/
 venv/

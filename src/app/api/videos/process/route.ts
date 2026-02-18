@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { extractVideoId, getVideoDetails, downloadAudio, transcribeWithAssemblyAI, chunkTranscript, getTranscriptWithSupadata, getTranscriptWithLangChain, getTranscriptNoAuth, getTranscriptWithYtDlpSubtitles } from '@/lib/youtube';
+import { extractVideoId, getVideoDetails, downloadAudio, transcribeWithAssemblyAI, chunkTranscript, getTranscriptWithSupadata } from '@/lib/youtube';
 import { generateEmbedding } from '@/lib/gemini';
 import pLimit from 'p-limit';
 
@@ -99,86 +99,44 @@ export async function POST(request: NextRequest) {
 
     console.log('Video record created:', video.id);
 
-    // Get transcript with prioritized fallback chain
-    // Priority: Supadata (paid API, most reliable) → LangChain → youtube-transcript → ytdl-core → yt-dlp → AssemblyAI
+    // Get transcript with fallback chain: Supadata → AssemblyAI
     console.log('Attempting to get transcript with Supadata...');
     let transcript = await getTranscriptWithSupadata(videoId);
 
     if (transcript) {
-      console.log('Transcript found from Supadata, length:', transcript.length);
+      console.log('✅ Transcript found from Supadata, length:', transcript.length);
     } else {
-      console.log('No transcript from Supadata. Trying LangChain...');
-      transcript = await getTranscriptWithLangChain(videoId);
-
-      if (transcript) {
-        console.log('Transcript found from LangChain, length:', transcript.length);
-      } else {
-        console.log('No transcript found from LangChain. Trying youtube-transcript...');
-        let transcriptResult = await getTranscriptNoAuth(youtubeUrl);
-        transcript = transcriptResult.transcript;
-
-        if (transcriptResult.success && transcript) {
-          console.log('Transcript found from youtube-transcript, length:', transcript.length);
-        } else {
-          // Try ytdl-core fallback (works on Vercel with cookies)
-          console.log(`No transcript from youtube-transcript. Error: ${transcriptResult.error || 'Unknown error'}. Trying ytdl-core...`);
-          
-          const { getTranscriptWithYtdlCore } = require('@/lib/youtube');
-          const ytdlTranscript = await getTranscriptWithYtdlCore(videoId);
-          
-          if (ytdlTranscript) {
-            transcript = ytdlTranscript;
-            console.log('Transcript found via ytdl-core, length:', transcript?.length);
-          } else {
-          // Try yt-dlp subtitles (only works locally, not on Vercel)
-          console.log('ytdl-core transcript also failed. Attempting yt-dlp subtitles...');
-          
-          try {
-            transcript = await getTranscriptWithYtDlpSubtitles(youtubeUrl, videoId);
-            if (transcript) {
-              console.log('Transcript found from yt-dlp subtitles, length:', transcript.length);
-            }
-          } catch (e) {
-            console.error('Error invoking yt-dlp subtitles:', e);
-          }
-          
-          if (!transcript) {
-            console.log('No subtitles from yt-dlp. Falling back to AssemblyAI...');
-            
-            // Check if we're on Vercel where yt-dlp doesn't work
-            if (process.env.VERCEL) {
-              console.error('❌ Cannot use AssemblyAI on Vercel - yt-dlp binary not available for audio download');
-              console.error('💡 This video has transcripts disabled. Try a different video with transcripts enabled.');
-              throw new Error('Transcripts are disabled for this video and AssemblyAI cannot be used on Vercel');
-            }
-            
-            try {
-              // Download audio from YouTube (still required for AssemblyAI fallback)
-              console.log('Downloading audio...');
-              let audioPath;
-              try {
-                audioPath = await downloadAudio(youtubeUrl);
-                console.log('Audio downloaded to:', audioPath);
-              } catch (error) {
-                console.error('Error downloading audio:', error);
-                throw new Error('Failed to download video audio');
-              }
-              // ... (rest of AssemblyAI logic)
-              transcript = await transcribeWithAssemblyAI(audioPath); // Pass audioPath
-              console.log('Transcription completed with AssemblyAI, length:', transcript?.length || 0);
-              
-              if (!transcript || transcript.trim().length === 0) {
-                throw new Error('No transcript was generated from AssemblyAI');
-              }
-            } catch (error:any) {
-              console.error('Error transcribing audio with AssemblyAI:', error);
-              // Don't delete here - let the outer catch block handle cleanup
-              throw new Error('Failed to transcribe video with AssemblyAI: ' + error.message);
-            }
-          }
-        }
+      console.log('⚠️  Supadata failed or returned empty. Falling back to AssemblyAI...');
+      
+      // Check if we're on Vercel where yt-dlp doesn't work
+      if (process.env.VERCEL) {
+        console.error('❌ Cannot use AssemblyAI on Vercel - yt-dlp binary not available for audio download');
+        console.error('💡 Ensure SUPADATA_API_KEY is set in Vercel environment variables');
+        throw new Error('Transcript extraction failed. Supadata API key may be missing or video has no captions.');
       }
-    }
+      
+      try {
+        // Download audio from YouTube for AssemblyAI transcription
+        console.log('Downloading audio for AssemblyAI...');
+        let audioPath;
+        try {
+          audioPath = await downloadAudio(youtubeUrl);
+          console.log('Audio downloaded to:', audioPath);
+        } catch (error) {
+          console.error('Error downloading audio:', error);
+          throw new Error('Failed to download video audio');
+        }
+        
+        transcript = await transcribeWithAssemblyAI(audioPath);
+        console.log('✅ Transcription completed with AssemblyAI, length:', transcript?.length || 0);
+        
+        if (!transcript || transcript.trim().length === 0) {
+          throw new Error('No transcript was generated from AssemblyAI');
+        }
+      } catch (error: any) {
+        console.error('Error transcribing audio with AssemblyAI:', error);
+        throw new Error('Failed to transcribe video with AssemblyAI: ' + error.message);
+      }
     }
 
     console.log('Chunking transcript...');
